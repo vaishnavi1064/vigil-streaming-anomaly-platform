@@ -104,7 +104,32 @@ Nothing has a default. Compose refuses to start on an unset variable and the con
 raises with the variable's name, so a half-filled `.env` fails loudly instead of quietly
 connecting somewhere unintended.
 
-Then, in three terminals:
+One command, end to end, with a fault injected while it runs:
+
+```bash
+python demo.py            # ~90 s: produce, pause the broker mid-stream, reconcile, detect, remediate
+```
+
+It produces a labelled scenario with deploy markers, **pauses the Kafka broker for 8 seconds
+while the producer is running**, reconciles the stream against the broker's own offsets,
+detects with conditioning on, and hands the sharpest episode to the safety-gated agent. Then
+it prints each claim and whether it held, and exits non-zero if any did not. A recent run:
+
+```
+  [ok] produced: delivered 48,002  failed 0
+  [ok] reconciliation reports zero drift: 48,000 readings across 8 channels | drift 0
+  [ok] broker offset audit agrees: 48,000 retained | consumed 48,000 | offset drift +0
+  [ok] a fault was injected while the stream ran: broker paused for 8s mid-production
+  [ok] episodes were raised: 8 episodes, sharpest peak 74.5 on pump-00.vibration_mm_s
+  [ok] conditioning recorded a verdict for every episode: 8 decided against 8 episodes
+  [ok] every agent action passed the safety gate: 4 actions on episode 4
+  7/7 claims held
+```
+
+It runs in its own Postgres schema and drops it afterwards, so it neither reads nor deletes
+anything else. `--keep` leaves the schema behind and prints how to point the dashboard at it.
+
+Or drive the pieces yourself, in three terminals:
 
 ```bash
 # 1. the detection spine

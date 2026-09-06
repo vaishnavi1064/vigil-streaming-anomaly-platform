@@ -1,0 +1,51 @@
+{
+  "claims": [
+    {
+      "name": "produced",
+      "held": true,
+      "detail": "delivered 48,002  failed 0"
+    },
+    {
+      "name": "reconciliation reports zero drift",
+      "held": true,
+      "detail": "ZERO DRIFT: 48,000 readings across 8 channels | drift 0 | missing 0 | duplicates 0 | reordered 0"
+    },
+    {
+      "name": "broker offset audit agrees",
+      "held": true,
+      "detail": "broker log sensor.readings: low 0 high 48,000 -> 48,000 retained | consumed 48,000 | offset drift +0"
+    },
+    {
+      "name": "a fault was injected while the stream ran",
+      "held": true,
+      "detail": "broker paused for 8s mid-production"
+    },
+    {
+      "name": "episodes were raised",
+      "held": true,
+      "detail": "8 episodes, sharpest peak 74.5 on pump-00.vibration_mm_s"
+    },
+    {
+      "name": "conditioning recorded a verdict for every episode",
+      "held": true,
+      "detail": "8 decided against 8 episodes -- conditioning: decided 8 | attributed 1 | raised 7 | corroborated=1, implausible=7"
+    },
+    {
+      "name": "every agent action passed the safety gate",
+      "held": true,
+      "detail": "4 actions on episode 4"
+    }
+  ],
+  "episodes": 8,
+  "fault": {
+    "injected": true,
+    "error": null,
+    "hold_s": 8
+  },
+  "agent_steps": [
+    "describe_channel -> approved (read_only)",
+    "fetch_recent_readings -> approved (read_only)",
+    "request_recalibration -> approved (within_limits)",
+    "raise_ticket -> approved (within_limits)"
+  ]
+}
