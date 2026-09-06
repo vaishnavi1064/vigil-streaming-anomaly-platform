@@ -23,11 +23,14 @@ import argparse
 import logging
 import signal
 import sys
+import threading
 import time
 from collections import Counter
 
 from confluent_kafka import Consumer, KafkaError, TopicPartition
 
+from vigil.detectors.foundation import ChronosResidualDetector, FoundationModelUnavailable
+from vigil.detectors.offpath import OffPathScorer
 from vigil.detectors.zscore import RollingZScoreDetector
 from vigil.episodes import EpisodeBuilder
 from vigil.readings import Reading
@@ -52,6 +55,9 @@ class DetectionSpine:
         threshold: float,
         merge_gap_ms: int,
         warmup_samples: int,
+        foundation: ChronosResidualDetector | None = None,
+        foundation_threshold: float = 6.0,
+        foundation_batch: int = 32,
     ) -> None:
         self.store = store
         self.windows = SlidingWindowAssigner(
@@ -67,6 +73,40 @@ class DetectionSpine:
         self.origin_counts: Counter[str] = Counter()
         self.latencies: list[float] = []
 
+        # The foundation model keeps its own episode builder rather than annotating the
+        # baseline's. The two detectors score on different scales and disagree, and the
+        # whole point of running them side by side is to see where -- folding the model's
+        # opinion into episodes the baseline chose would discard exactly that comparison.
+        self.foundation = foundation
+        self.foundation_builder = (
+            EpisodeBuilder(threshold=foundation_threshold, merge_gap_ms=merge_gap_ms)
+            if foundation is not None
+            else None
+        )
+        self.foundation_latencies: list[float] = []
+        self._foundation_lock = threading.Lock()
+        # The off-path worker and the main loop both write episodes. A psycopg connection
+        # is not safe for concurrent use, and the counters would race too, so every write
+        # goes through one lock. Contention is negligible: episodes are rare by
+        # construction, which is the whole point of the platform.
+        self._store_lock = threading.Lock()
+        self.offpath = (
+            OffPathScorer(foundation, self._on_foundation_scores, max_batch=foundation_batch)
+            if foundation is not None
+            else None
+        )
+        if self.offpath is not None:
+            self.offpath.start()
+
+    def _on_foundation_scores(self, scores) -> None:
+        """Called from the off-path worker thread; must stay cheap and thread-safe."""
+        with self._foundation_lock:
+            for score in scores:
+                self.foundation_latencies.append(score.latency_ms)
+                episode = self.foundation_builder.add(score)
+                if episode is not None:
+                    self._persist(episode)
+
     def consume(self, reading: Reading) -> list[int]:
         """Feed one reading; returns the ids of any episodes this closed and persisted."""
         self.readings_seen += 1
@@ -76,6 +116,14 @@ class DetectionSpine:
             # Fold the window into the reference only after scoring it, so it cannot
             # contribute to the distribution it is being judged against.
             self.baseline.observe(window)
+            # Hand a copy to the model path before observing there, for the same reason.
+            # submit() never blocks: if the model is behind, the window is dropped and
+            # counted, and the stream carries on.
+            if self.offpath is not None:
+                # Never blocks: if the model is behind, the window is dropped and counted,
+                # and the stream carries on. The worker folds it into the model's history
+                # itself, so the hot path does not touch that state.
+                self.offpath.submit(window)
             if score is None:
                 continue
             self.latencies.append(score.latency_ms)
@@ -90,6 +138,8 @@ class DetectionSpine:
         for window in self.windows.close_all():
             score = self.baseline.score(window)
             self.baseline.observe(window)
+            if self.offpath is not None:
+                self.offpath.submit(window)
             if score is None:
                 continue
             self.latencies.append(score.latency_ms)
@@ -98,13 +148,23 @@ class DetectionSpine:
                 written.append(self._persist(episode))
         for episode in self.builder.close_all():
             written.append(self._persist(episode))
+
+        if self.offpath is not None:
+            # Let the model finish its backlog before closing its episodes, or the last
+            # windows of the run would be reported as never scored when in fact they were
+            # merely still queued.
+            self.offpath.stop()
+            with self._foundation_lock:
+                for episode in self.foundation_builder.close_all():
+                    written.append(self._persist(episode))
         return written
 
     def _persist(self, episode) -> int:
-        episode_id = self.store.record_episode(episode)
-        self.episodes_written += 1
-        for origin in episode.injected_origins:
-            self.origin_counts[origin] += 1
+        with self._store_lock:
+            episode_id = self.store.record_episode(episode)
+            self.episodes_written += 1
+            for origin in episode.injected_origins:
+                self.origin_counts[origin] += 1
         log.info(
             "episode %s %s [%d, %d] peak=%.1f windows=%d origins=%s",
             episode_id,
@@ -117,19 +177,40 @@ class DetectionSpine:
         )
         return episode_id
 
-    def latency_report(self) -> str:
-        if not self.latencies:
-            return "no windows scored"
-        ordered = sorted(self.latencies)
+    @staticmethod
+    def _percentiles(samples: list[float]) -> str:
+        ordered = sorted(samples)
 
         def pct(p: float) -> float:
             return ordered[min(int(len(ordered) * p), len(ordered) - 1)]
 
         return (
-            f"hot-path scoring latency over {len(ordered):,} windows: "
-            f"p50 {pct(0.50):.3f} ms | p95 {pct(0.95):.3f} ms | p99 {pct(0.99):.3f} ms | "
-            f"max {ordered[-1]:.3f} ms"
+            f"p50 {pct(0.50):.3f} ms | p95 {pct(0.95):.3f} ms | "
+            f"p99 {pct(0.99):.3f} ms | max {ordered[-1]:.3f} ms"
         )
+
+    def latency_report(self) -> list[str]:
+        lines = []
+        if self.latencies:
+            lines.append(
+                f"hot path ({self.baseline.name}) over {len(self.latencies):,} windows: "
+                f"{self._percentiles(self.latencies)}  [budget 250 ms p99, NFR-1]"
+            )
+        else:
+            lines.append("hot path: no windows scored")
+        if self.foundation is not None:
+            if self.foundation_latencies:
+                lines.append(
+                    f"off critical path ({self.foundation.name}) over "
+                    f"{len(self.foundation_latencies):,} windows, amortised per window: "
+                    f"{self._percentiles(self.foundation_latencies)}  [not bound by NFR-1]"
+                )
+            else:
+                lines.append(
+                    f"off critical path ({self.foundation.name}): no windows scored "
+                    f"(cold {self.foundation.windows_skipped_cold:,})"
+                )
+        return lines
 
 
 def build_consumer(bootstrap: str, group: str, from_beginning: bool) -> Consumer:
@@ -157,6 +238,24 @@ def run(args: argparse.Namespace) -> int:
     store = EpisodeStore(PostgresSettings.from_env())
     store.apply_schema()
 
+    foundation = None
+    if not args.no_foundation_model:
+        candidate = ChronosResidualDetector(
+            args.foundation_model,
+            bucket_ms=args.foundation_bucket_ms,
+            context_buckets=args.foundation_context,
+            min_context_buckets=args.foundation_min_context,
+            device=args.foundation_device,
+        )
+        try:
+            candidate.load()
+            foundation = candidate
+        except FoundationModelUnavailable as exc:
+            # A degradation, not a failure. ARCHITECTURE.md section 7 promises the platform
+            # falls back to the baseline when the model path is unavailable; this is where
+            # that promise is kept.
+            log.warning("foundation model unavailable, continuing on the baseline: %s", exc)
+
     spine = DetectionSpine(
         store,
         window_ms=args.window_ms,
@@ -166,6 +265,9 @@ def run(args: argparse.Namespace) -> int:
         threshold=args.threshold,
         merge_gap_ms=args.merge_gap_ms or args.slide_ms * 2,
         warmup_samples=args.warmup_samples,
+        foundation=foundation,
+        foundation_threshold=args.foundation_threshold,
+        foundation_batch=args.foundation_batch,
     )
 
     consumer = build_consumer(bootstrap, args.group, args.from_beginning)
@@ -183,6 +285,16 @@ def run(args: argparse.Namespace) -> int:
         f"consuming {topic!r} at {bootstrap} as group {args.group!r} | "
         f"windows {args.window_ms / 1000:g}s/{args.slide_ms / 1000:g}s | "
         f"threshold {args.threshold} | episodes -> postgres",
+        flush=True,
+    )
+    print(
+        f"detectors: {spine.baseline.name} (hot path)"
+        + (
+            f" + {foundation.name} (off critical path, batch {args.foundation_batch},"
+            f" threshold {args.foundation_threshold})"
+            if foundation is not None
+            else " only -- foundation model not running"
+        ),
         flush=True,
     )
 
@@ -238,7 +350,13 @@ def run(args: argparse.Namespace) -> int:
                     f"(cold {spine.baseline.windows_skipped_cold:,}) | "
                     f"flagged {spine.builder.windows_flagged:,} | "
                     f"episodes {spine.episodes_written:,} | "
-                    f"late {spine.windows.late_readings:,}",
+                    f"late {spine.windows.late_readings:,}"
+                    + (
+                        f" | model scored {spine.foundation.windows_scored:,}"
+                        f" backlog {spine.offpath.backlog:,}"
+                        if spine.offpath is not None
+                        else ""
+                    ),
                     flush=True,
                 )
                 last_report = now
@@ -280,10 +398,44 @@ def run(args: argparse.Namespace) -> int:
             )
         if malformed:
             print(f"malformed records skipped: {malformed:,}", file=sys.stderr, flush=True)
-        print(spine.latency_report(), flush=True)
+        if spine.offpath is not None:
+            print(f"foundation model: {spine.offpath.summary()}", flush=True)
+            print(
+                f"  windows scored {spine.foundation.windows_scored:,} | "
+                f"cold {spine.foundation.windows_skipped_cold:,} | "
+                f"batches {spine.foundation.batches_run:,}",
+                flush=True,
+            )
+        for line in spine.latency_report():
+            print(line, flush=True)
+        _print_detector_comparison(store)
         store.close()
 
     return 0
+
+
+def _print_detector_comparison(store: EpisodeStore) -> None:
+    """Episodes per detector, so 'runs alongside the baseline' is visible, not asserted."""
+    with store._conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT raised_by, count(*) AS episodes, round(avg(peak_score)::numeric, 1) AS avg_peak,
+                   round(max(peak_score)::numeric, 1) AS max_peak
+            FROM episodes
+            GROUP BY raised_by
+            ORDER BY raised_by
+            """
+        )
+        rows = cur.fetchall()
+    if not rows:
+        return
+    print("\nepisodes by detector (scores are on each detector's own scale, not comparable):")
+    for r in rows:
+        print(
+            f"  {r['raised_by']:<24} {r['episodes']:>5} episodes | "
+            f"avg peak {r['avg_peak']} | max peak {r['max_peak']}",
+            flush=True,
+        )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -319,6 +471,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="quiet gap that closes an episode; defaults to two slides",
     )
     d.add_argument("--warmup-samples", type=int, default=120)
+
+    f = p.add_argument_group("foundation model (off the critical path, ADR-017)")
+    f.add_argument(
+        "--foundation-model",
+        default="amazon/chronos-bolt-tiny",
+        help="Chronos-Bolt checkpoint; measured per window at batch 32 on this CPU: "
+        "tiny 0.64 ms, mini 1.15 ms, small 2.95 ms, base 9.32 ms",
+    )
+    f.add_argument(
+        "--no-foundation-model",
+        action="store_true",
+        help="run the baseline alone (also the automatic fallback if the model will not load)",
+    )
+    f.add_argument("--foundation-threshold", type=float, default=6.0)
+    f.add_argument("--foundation-batch", type=int, default=32)
+    f.add_argument("--foundation-bucket-ms", type=int, default=1_000)
+    f.add_argument("--foundation-context", type=int, default=128)
+    f.add_argument("--foundation-min-context", type=int, default=48)
+    f.add_argument("--foundation-device", default="cpu", choices=("cpu", "cuda"))
 
     p.add_argument("--commit-every", type=int, default=500, help="readings between offset commits")
     p.add_argument("--report-interval", type=float, default=10.0)

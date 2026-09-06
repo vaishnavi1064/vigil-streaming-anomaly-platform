@@ -11,6 +11,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+foundation = [
+    # Zero-shot detection spine (ADR-001). CPU torch is enough: chronos-bolt-tiny measured
+    # 0.64 ms per window at batch 32 on the reference laptop.
+    "torch>=2.4",
+    "chronos-forecasting>=1.5",
+]
 dev = [
     "pytest>=8.3",
     "pytest-timeout>=2.3",
@@ -28,7 +34,8 @@ where = ["src"]
 testpaths = ["tests"]
 markers = [
     "integration: needs the docker compose stack running (deselect with -m 'not integration')",
-    "slow: long-running soak or sweep; excluded from the default run",
+    "slow: needs model weights or takes noticeably longer; still runs by default, deselect with -m 'not slow'",
+    "soak: multi-hour run; never part of the default suite",
 ]
 addopts = "-q --strict-markers"
 timeout = 300
