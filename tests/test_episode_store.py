@@ -193,23 +193,21 @@ def test_attribution_to_an_unknown_event_is_rejected_by_the_database(store):
 
 
 def test_an_invalid_status_is_rejected_by_the_database(store):
-    with pytest.raises(psycopg.errors.CheckViolation):
-        with store._conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO episodes (channel, t_start_ms, t_end_ms, raised_by, peak_score,"
-                " mean_score, window_count, threshold, status)"
-                " VALUES ('c', 0, 1, 'z', 1, 1, 1, 1, 'maybe')"
-            )
+    with pytest.raises(psycopg.errors.CheckViolation), store._conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO episodes (channel, t_start_ms, t_end_ms, raised_by, peak_score,"
+            " mean_score, window_count, threshold, status)"
+            " VALUES ('c', 0, 1, 'z', 1, 1, 1, 1, 'maybe')"
+        )
 
 
 def test_a_backwards_span_is_rejected_by_the_database(store):
-    with pytest.raises(psycopg.errors.CheckViolation):
-        with store._conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO episodes (channel, t_start_ms, t_end_ms, raised_by, peak_score,"
-                " mean_score, window_count, threshold)"
-                " VALUES ('c', 5000, 1000, 'z', 1, 1, 1, 1)"
-            )
+    with pytest.raises(psycopg.errors.CheckViolation), store._conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO episodes (channel, t_start_ms, t_end_ms, raised_by, peak_score,"
+            " mean_score, window_count, threshold)"
+            " VALUES ('c', 5000, 1000, 'z', 1, 1, 1, 1)"
+        )
 
 
 def test_ground_truth_origins_survive_the_round_trip(store):
