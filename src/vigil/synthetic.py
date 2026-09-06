@@ -16,14 +16,32 @@ from __future__ import annotations
 
 import math
 import random
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
 
 class AnomalyKind(StrEnum):
+    """The shape of an excursion."""
+
     SPIKE = "spike"
     LEVEL_SHIFT = "level_shift"
     VARIANCE_BURST = "variance_burst"
+
+
+class AnomalyOrigin(StrEnum):
+    """What caused an excursion -- the distinction the whole evaluation turns on.
+
+    A FAULT is a genuine problem and must be detected whatever else is happening. DEPLOY
+    and PIPELINE excursions are artifacts of an operational event; attributing those to
+    their cause instead of paging is the point of conditioning. Because both kinds are
+    generated and labelled separately, an evaluation can tell targeted attribution apart
+    from suppressing everything inside a window (ADR-015).
+    """
+
+    FAULT = "fault"
+    DEPLOY = "deploy"
+    PIPELINE = "pipeline"
 
 
 @dataclass(frozen=True)
@@ -45,15 +63,22 @@ class InjectedEpisode:
     start_s: float
     end_s: float
     magnitude: float  # in units of the channel's noise sigma
+    origin: AnomalyOrigin = AnomalyOrigin.FAULT
 
     def covers(self, t_s: float) -> bool:
         return self.start_s <= t_s <= self.end_s
+
+    @property
+    def is_real(self) -> bool:
+        """True when this must be detected regardless of surrounding context."""
+        return self.origin is AnomalyOrigin.FAULT
 
 
 @dataclass(frozen=True)
 class Sample:
     value: float
     injected: AnomalyKind | None
+    origin: AnomalyOrigin | None = None
 
 
 # Duration ranges per kind, in seconds. A spike is one sample by definition; the others
@@ -84,6 +109,7 @@ class ChannelSimulator:
         spec: ChannelSpec,
         seed: int,
         anomalies_per_hour: float = 12.0,
+        scheduled: Sequence[InjectedEpisode] = (),
     ) -> None:
         self.spec = spec
         self._rng = random.Random(seed)
@@ -91,6 +117,11 @@ class ChannelSimulator:
         self._anomalies_per_hour = anomalies_per_hour
         self._episode: InjectedEpisode | None = None
         self._next_episode_at_s: float | None = None
+        # Episodes planned ahead of the run by a scenario (deploy artifacts, and faults
+        # placed deliberately inside or outside deploy windows). Kept in a separate queue
+        # from the Poisson stream so a scenario run is exactly reproducible from its plan.
+        self._scheduled = sorted(scheduled, key=lambda e: e.start_s)
+        self._scheduled_at = 0
         self.episodes: list[InjectedEpisode] = []
 
     def _schedule_next(self, t_s: float) -> None:
@@ -100,6 +131,25 @@ class ChannelSimulator:
             return
         gap_s = self._rng.expovariate(self._anomalies_per_hour / 3600.0)
         self._next_episode_at_s = t_s + gap_s
+
+    def _maybe_start_scheduled(self, t_s: float) -> InjectedEpisode | None:
+        """Activate the next scheduled episode once the stream reaches its start.
+
+        Fires on the first sample at or after `start_s`, and does not require the sample to
+        fall inside the span. A spike has zero duration, so an exact-instant match would
+        essentially never occur against a discrete sample grid and every scheduled spike
+        would vanish -- while the plan still listed it, leaving the evaluation expecting a
+        detection the data never contained. An episode present in the ground truth must be
+        present in the signal.
+        """
+        while self._scheduled_at < len(self._scheduled):
+            candidate = self._scheduled[self._scheduled_at]
+            if candidate.start_s > t_s:
+                return None
+            self._scheduled_at += 1
+            self.episodes.append(candidate)
+            return candidate
+        return None
 
     def _maybe_start_episode(self, t_s: float) -> None:
         if self._next_episode_at_s is None:
@@ -123,9 +173,18 @@ class ChannelSimulator:
 
     def sample(self, t_s: float) -> Sample:
         spec = self.spec
-        self._maybe_start_episode(t_s)
-        if self._episode is not None and not self._episode.covers(t_s):
-            self._episode = None
+        # A scheduled episode outranks a Poisson one: the scenario's ground truth is what
+        # the evaluation scores against, so it must never be displaced by chance.
+        scheduled = self._maybe_start_scheduled(t_s)
+        if scheduled is not None:
+            # In force for this sample by construction. The expiry check below must not
+            # run on it: an instantaneous spike does not cover the grid point it lands on,
+            # so checking would cancel it the moment it was activated.
+            self._episode = scheduled
+        else:
+            self._maybe_start_episode(t_s)
+            if self._episode is not None and not self._episode.covers(t_s):
+                self._episode = None
 
         active = self._episode
         sigma_scale = 1.0
@@ -142,15 +201,17 @@ class ChannelSimulator:
         value = spec.base + seasonal + self._noise * sigma_scale
 
         injected: AnomalyKind | None = None
+        origin: AnomalyOrigin | None = None
         if active is not None:
             injected = active.kind
+            origin = active.origin
             if active.kind is AnomalyKind.SPIKE:
                 value += active.magnitude * spec.noise_sigma
                 self._episode = None  # a spike is exactly one sample
             elif active.kind is AnomalyKind.LEVEL_SHIFT:
                 value += active.magnitude * spec.noise_sigma
 
-        return Sample(value=value, injected=injected)
+        return Sample(value=value, injected=injected, origin=origin)
 
 
 def default_fleet(channel_count: int, seed: int = 1729) -> list[ChannelSpec]:

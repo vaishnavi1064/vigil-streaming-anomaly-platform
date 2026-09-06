@@ -15,6 +15,7 @@ from pathlib import Path
 
 from confluent_kafka import KafkaException, Producer
 
+from vigil.context import ContextEvent
 from vigil.readings import Reading
 
 
@@ -54,6 +55,7 @@ class ReadingPublisher:
     ) -> None:
         self.topic = topic
         self.counters = counters or PublishCounters()
+        self.context_events_published = 0
         self._producer = Producer(
             {
                 "bootstrap.servers": bootstrap,
@@ -90,6 +92,22 @@ class ReadingPublisher:
                 # mysteriously low throughput.
                 self.counters.backpressure_waits += 1
                 self._producer.poll(0.05)
+
+    def publish_context(self, topic: str, event: ContextEvent) -> None:
+        """Publish a context marker, keyed by kind so all deploys share a partition.
+
+        Deliberately on the same producer as readings: a marker that lands after the
+        excursion it explains is useless, and a second producer would put the two on
+        independent flush schedules with no ordering relationship at all.
+        """
+        self._producer.produce(
+            topic,
+            key=str(event.kind),
+            value=event.to_json(),
+            timestamp=event.t_start_ms,
+            on_delivery=self.counters.on_delivery,
+        )
+        self.context_events_published += 1
 
     def poll(self, timeout: float = 0.0) -> None:
         self._producer.poll(timeout)

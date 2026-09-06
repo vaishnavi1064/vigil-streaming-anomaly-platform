@@ -48,6 +48,7 @@ class KafkaSettings:
     bootstrap: str
     readings_topic: str
     readings_partitions: int
+    context_topic: str
 
     @classmethod
     def from_env(cls) -> KafkaSettings:
@@ -56,6 +57,7 @@ class KafkaSettings:
             bootstrap=required("KAFKA_BOOTSTRAP"),
             readings_topic=required("READINGS_TOPIC"),
             readings_partitions=required_int("READINGS_PARTITIONS"),
+            context_topic=required("CONTEXT_TOPIC"),
         )
 
 

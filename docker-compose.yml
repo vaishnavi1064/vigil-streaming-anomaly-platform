@@ -70,6 +70,7 @@ services:
     environment:
       READINGS_TOPIC: ${READINGS_TOPIC:?READINGS_TOPIC must be set in .env}
       READINGS_PARTITIONS: ${READINGS_PARTITIONS:?READINGS_PARTITIONS must be set in .env}
+      CONTEXT_TOPIC: ${CONTEXT_TOPIC:?CONTEXT_TOPIC must be set in .env}
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
@@ -79,6 +80,9 @@ services:
             --create --if-not-exists --topic "$$1" --partitions "$$2" --replication-factor 1
         }
         create "$$READINGS_TOPIC" "$$READINGS_PARTITIONS"
+        # Context is low volume and every consumer needs all of it, so one partition:
+        # partitioning it would buy nothing and cost total ordering of the markers.
+        create "$$CONTEXT_TOPIC" 1
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list
     restart: "no"
 

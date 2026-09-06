@@ -23,9 +23,17 @@ class Reading:
     seq: int
     event_ts_ms: int
     value: float
-    # Ground truth from the synthetic source only. No detector reads this; the evaluation
-    # harness does. On a real feed it is always None.
+    # Ground truth from the synthetic source only. No detector reads either field; the
+    # evaluation harness does. On a real feed both are always None.
+    #
+    # `injected` is the shape of the excursion (spike, level_shift, variance_burst).
+    # `origin` is what caused it, and it is the field the whole evaluation turns on: a
+    # 'fault' must be detected even when a deploy is in flight, while a 'deploy' or
+    # 'pipeline' artifact is what conditioning is allowed to attribute away. Collapsing
+    # the two into one label would make targeted attribution indistinguishable from
+    # blanket muting (ADR-015).
     injected: str | None = None
+    origin: str | None = None
 
     def to_json(self) -> bytes:
         payload: dict[str, Any] = {
@@ -36,6 +44,8 @@ class Reading:
         }
         if self.injected is not None:
             payload["injected"] = self.injected
+        if self.origin is not None:
+            payload["origin"] = self.origin
         return json.dumps(payload, separators=(",", ":")).encode()
 
     @classmethod
@@ -47,4 +57,5 @@ class Reading:
             event_ts_ms=int(d["ts"]),
             value=float(d["value"]),
             injected=d.get("injected"),
+            origin=d.get("origin"),
         )
