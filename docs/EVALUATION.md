@@ -238,6 +238,67 @@ doing exactly its job.
   timing is anchored to wall clock and window boundaries fall differently. Compare v1 and v2
   at the level of the effect, not digit by digit.
 
+### 3.5 Sensitivity at a realistic deploy density, and the fail-open check
+
+The v1/v2 runs deploy 60 times an hour, which overlaps enough to cover nearly the whole run.
+This row lowers that to 20 an hour -- six deploys over 15 minutes, windows covering a
+fraction of the stream rather than all of it -- and changes nothing else.
+
+Run `4c4b0a0d`:
+
+```
+python evaluate.py --duration 900 --rate 400 --channels 12     --deploys-per-hour 20 --faults-per-hour 120     --report-json docs/results/paired-evaluation-low-density.json
+```
+
+Ground truth: **30 real faults** (12 inside context windows, 18 outside, 7 inside quiet
+windows), **20 injected artifacts**, **6 deploy windows**.
+
+| Measure | Shadow | Conditioned | Delta |
+|---|---|---|---|
+| Pages raised | 73 | 69 | -4 |
+| False pages (artifact + unexplained) | 60 | 56 | -4 |
+| of which artifact-driven | 20 | 16 | -4 |
+| Recall, all real faults | 90.0% (27/30) | 83.3% (25/30) | -6.7% |
+| Recall, faults **outside** windows | 94.4% (17/18) | 94.4% (17/18) | **+0.0%** |
+| Recall, faults **inside** windows | 83.3% (10/12) | 66.7% (8/12) | -16.7% |
+| Recall, faults in **quiet** windows | 71.4% (5/7) | 71.4% (5/7) | **+0.0%** |
+| Precision (incident-level) | 17.8% | 18.8% | +1.0% |
+
+**false-positive reduction +6.7% (target >= 40%, missed) -- recall loss +6.7% (tolerance
+<= 5%, missed). NFR-8 NOT MET.**
+
+What the row adds beyond a third failure. **The v1 pathology is gone.** v1 suppressed every
+real fault in a quiet deploy window; here quiet-window recall is preserved exactly, and so
+is recall outside windows. The remaining loss is entirely inside deploy windows: four
+attributions, and two of them took a real fault with them. That is the same picture the v2
+diagnosis predicts -- corroboration now fires only on an exact start-time tie, rarely, and
+when it does fire it is close to a coin flip.
+
+Density is therefore not what makes the policy miss NFR-8. It misses at 60 deploys an hour
+by over-suppressing (v1) or barely acting (v2), and at 20 an hour by barely acting. The
+binding problem is the resolution of the corroboration test, which is B-4.
+
+#### Fail-open, verified end to end
+
+The same run adds a third pass: conditioning **on**, pointed at a context topic that exists
+and is empty.
+
+```
+fail-open (ADR-007) HELD: 73 of 73 episodes identical to the unconditioned pass
+                        | 0 missing, 0 extra, 0 suppressed, 0 attributed
+```
+
+The detector reported `decided 73 | attributed 0 | raised 73 | no_context=73` against
+`context events seen 0`. Every episode the unconditioned baseline raised, the signal-less
+conditioned pass raised too, with the same channel, span, detector and status. This is the
+Phase 3 gate's fail-open clause, verified against a live pipeline rather than only in unit
+tests.
+
+Scoped precisely: an empty topic leaves the context source *available and silent*, which the
+policy answers with `no_context`. A source that cannot be reached at all is answered with
+`fail_open` and is covered by unit tests in `tests/test_conditioning.py` -- taking the broker
+away mid-run would take the readings with it and leave nothing to condition.
+
 ## 4. Q2 — detector vs. baseline on TSB-AD-M
 
 **Corpus.** TSB-AD-M, the multivariate track: 200 labelled series, 2.4 GB extracted.

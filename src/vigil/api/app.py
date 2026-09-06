@@ -143,6 +143,45 @@ def detectors() -> dict[str, Any]:
     return {"detectors": out, "hot_path_budget_ms_p99": 250}
 
 
+@app.get("/reconciliation")
+def reconciliation(windows: int = 60) -> dict[str, Any]:
+    """The evidence behind any zero-drift claim, not a green light.
+
+    Returns the most recent reconciliation run *and* the health windows behind it, because a
+    single aggregate figure is exactly the thing a reader should not have to trust. Drift is
+    reported next to the independent broker-offset audit: the first is what our own ledger
+    says, the second is what the broker says, and agreement between two counts derived
+    differently is the only reason to believe either.
+
+    Absent data is reported as absent. A dashboard that renders zeros when the harness has
+    never run would claim a clean pipeline on no evidence at all.
+    """
+    with _store() as store, store._conn.cursor() as cur:
+        cur.execute(
+            "SELECT topic, duration_s, readings, channels, drift, missing, duplicates,"
+            " regressions, broker_available, broker_consumed, offset_drift, created_at"
+            " FROM reconciliation_runs ORDER BY created_at DESC LIMIT 1"
+        )
+        latest = cur.fetchone()
+        cur.execute(
+            "SELECT window_start_ms, window_end_ms, channels, readings, missing, duplicates,"
+            " regressions, max_lag_ms, severity FROM pipeline_health"
+            " ORDER BY window_start_ms DESC LIMIT %s",
+            (max(1, min(windows, 500)),),
+        )
+        recent = cur.fetchall()
+        cur.execute("SELECT severity, count(*) AS windows FROM pipeline_health GROUP BY severity")
+        by_severity = {r["severity"]: r["windows"] for r in cur.fetchall()}
+
+    return {
+        "latest_run": latest,
+        "windows": recent,
+        "windows_by_severity": by_severity,
+        "disturbed_windows": sum(n for s, n in by_severity.items() if s != "ok"),
+        "has_evidence": latest is not None,
+    }
+
+
 @app.get("/context")
 def context_events(limit: int = 100) -> dict[str, Any]:
     with _store() as store, store._conn.cursor() as cur:

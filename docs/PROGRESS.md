@@ -39,7 +39,7 @@ Phases are from `BUILD.md` section 7; stories from `docs/USER_STORIES.md`.
 | D3 | Pluggable conditioning interface | **Done** - `ContextSignalSource` with static/Kafka/composite implementations; pipeline and deploy signals share one wire, one schema, one interface |
 | E1 | Explained anomaly (VLM, flagged windows only) | Not started - see BLOCKERS C-1/C-2 (4 GB VRAM, no API key) |
 | F1 | Safety-gated remediation | **Done** - closed action set, deterministic gate that never reads the rationale, sandbox with a structural interlock, BM25 runbook grounding. 98 tests |
-| G1 | Live dashboard | **Partial** - episodes, per-detector comparison, latency vs. budget. Reconciliation panel absent until Phase 2, and the page says why |
+| G1 | Live dashboard | **Done** - episodes, per-detector comparison, latency vs. budget, and the reconciliation panel story G1 calls Must: ledger drift beside the independent broker-offset audit, per-window health with grades. Still refuses to render numbers when no run has happened. Screenshot-verified light and dark, 14 API tests |
 | H1 | Throughput harness | **Done** - producer 76,556 ev/s blast; consumer-side curve measured over a 3.9 M backlog: 94,495/s at one consumer, plateau **170,414/s at 3-6 consumers** over 6 partitions. NFR-4 met (20,000 target); NFR-5's near-linear claim **not** met, 1.80x at 6 consumers. `docs/SCALE.md` |
 | H2 | Chaos suite | **Done** - 4 fault modes, all broke 20/20 serviceability samples, all recovered within the 60s budget, drift 0 verified by independent replay. `docs/CHAOS.md`. 18 unit tests |
 | I1 | Honest detection benchmark | **Harness built**, smoke-run on 6 series. Full 200-series run not yet done |
@@ -54,6 +54,7 @@ Phases are from `BUILD.md` section 7; stories from `docs/USER_STORIES.md`.
 | 2026-09-05 | `67630bb` | **Phase 1 gate passed.** Wrote `docs/CORRECTNESS.md` (guarantee per boundary + what is not covered), filled `docs/EVALUATION.md` sections 5.1a-5.1d with measured numbers, wrote `README.md`. |
 | 2026-09-05 | `4e55212` | **Phase 2 started.** Reconciliation harness: per-channel sequence identity, independent broker-offset audit, per-window health signal on the context topic. Chaos suite: 4 fault modes with recovery verified by independent replay. Scale harness: parallelism sweep over a fixed pre-filled backlog. |
 | 2026-09-06 | `f011835` | **Chaos verified** (4/4, disruption proven), `docs/CHAOS.md`, the paired evaluation harness (`evaluate.py`), and conditioning wired into the detector behind `--conditioning`. |
+| 2026-09-06 | (this commit) | **Fail-open verified end to end and the reconciliation panel built.** The low-density sensitivity run doubles as the fail-open check: 73 of 73 episodes identical to the unconditioned pass with `no_context=73`. Sensitivity itself: at 20 deploys/hour conditioning neither blankets (quiet-window and outside-window recall untouched) nor helps much (+6.7% FP reduction), so density is not what makes NFR-8 miss. |
 | 2026-09-06 | (this commit) | **Scale sweep run and `docs/SCALE.md` written.** Plateau 170,414 readings/s at 3-6 consumers over 6 partitions; NFR-4 met, NFR-5's near-linear claim not met at 1.80x. Multi-consumer drains read up to 2,100 records *more* than were produced -- rebalance re-delivery, a measured statement of why this path is at-least-once. |
 | 2026-09-06 | `95aa6d4` | **v2 measured and published: NFR-8 missed again (+9.0% FP reduction, -10.0% recall), and the test itself was invalid.** Episode start times are the start of the window that flagged them, and windows slide by 10 s, so a 5 s synchrony tolerance could only ever match an exact tie. Ground truth for the same run puts consecutive in-scope artifact onsets a median 1.8 s apart. Recorded as B-4. |
 | 2026-09-06 | `1c3a330` | Fail-open is now a third pass in the paired harness rather than an argument: conditioning on, context topic empty, required to reproduce the unconditioned pass episode for episode. |
@@ -163,14 +164,12 @@ rented GPU now that the training set is measured to have five distinct targets.
 
 **Then, in rough priority order:**
 
-1. Fail-open verification end to end (`evaluate.py` now runs it as a third pass, ADR-007);
-   pair it with the sensitivity run at a realistic deploy density so one run answers both.
-2. Full 200-series TSB-AD benchmark with the foundation model, and the honest
+1. Full 200-series TSB-AD benchmark with the foundation model, and the honest
    where-it-loses table.
-3. Flink checkpoint-recovery chaos run (`chaos.py --fault flink-taskmanager-kill`, needs the
+2. Flink checkpoint-recovery chaos run (`chaos.py --fault flink-taskmanager-kill`, needs the
    flink profile up) -- this is the scenario that actually exercises two-phase commit.
-4. Multi-hour soak for NFR-6. Must run after chaos and scale.
-5. VLM explanation (blocked on C-2, needs a key), ClickHouse and Iceberg, Terraform and K8s.
+3. Multi-hour soak for NFR-6. Must run after chaos and scale.
+4. VLM explanation (blocked on C-2, needs a key), ClickHouse and Iceberg, Terraform and K8s.
 
 ## 6. Phase 1 gate evidence
 

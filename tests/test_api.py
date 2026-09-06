@@ -19,51 +19,58 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def client():
+def schema():
+    """A throwaway schema, and the name of it: some tests seed tables the store does not."""
     try:
         settings = PostgresSettings.from_env()
         psycopg.connect(settings.dsn, connect_timeout=3).close()
     except (MissingSetting, psycopg.Error) as exc:
         pytest.skip(f"postgres unavailable ({exc}); run `docker compose up -d`")
 
-    schema = f"vigil_api_{uuid.uuid4().hex[:12]}"
+    name = f"vigil_api_{uuid.uuid4().hex[:12]}"
     with psycopg.connect(settings.dsn, autocommit=True) as admin:
-        admin.execute(f'CREATE SCHEMA "{schema}"')
-    os.environ["PGOPTIONS"] = f"-c search_path={schema}"
+        admin.execute(f'CREATE SCHEMA "{name}"')
+    os.environ["PGOPTIONS"] = f"-c search_path={name}"
     try:
-        store = EpisodeStore(settings)
-        store.apply_schema()
-        for i in range(3):
-            store.record_episode(
-                Episode(
-                    channel=f"pump-0{i}.flow_m3_h",
-                    t_start_ms=1_000 + i * 100_000,
-                    t_end_ms=31_000 + i * 100_000,
-                    raised_by="zscore" if i < 2 else "chronos-bolt-tiny",
-                    peak_score=10.0 + i,
-                    window_count=2 + i,
-                    threshold=8.0,
-                    scores=[
-                        ScoreSample(
-                            "zscore" if i < 2 else "chronos-bolt-tiny",
-                            1_000 + i * 100_000,
-                            31_000 + i * 100_000,
-                            10.0 + i,
-                            0.25 * (i + 1),
-                        )
-                    ],
-                    injected_origins=("fault",) if i == 0 else (),
-                )
-            )
-        store.close()
-
-        from vigil.api.app import app
-
-        yield TestClient(app)
+        yield name
     finally:
         os.environ.pop("PGOPTIONS", None)
         with psycopg.connect(settings.dsn, autocommit=True) as admin:
-            admin.execute(f'DROP SCHEMA "{schema}" CASCADE')
+            admin.execute(f'DROP SCHEMA "{name}" CASCADE')
+
+
+@pytest.fixture
+def client(schema):
+    settings = PostgresSettings.from_env()
+    store = EpisodeStore(settings)
+    store.apply_schema()
+    for i in range(3):
+        store.record_episode(
+            Episode(
+                channel=f"pump-0{i}.flow_m3_h",
+                t_start_ms=1_000 + i * 100_000,
+                t_end_ms=31_000 + i * 100_000,
+                raised_by="zscore" if i < 2 else "chronos-bolt-tiny",
+                peak_score=10.0 + i,
+                window_count=2 + i,
+                threshold=8.0,
+                scores=[
+                    ScoreSample(
+                        "zscore" if i < 2 else "chronos-bolt-tiny",
+                        1_000 + i * 100_000,
+                        31_000 + i * 100_000,
+                        10.0 + i,
+                        0.25 * (i + 1),
+                    )
+                ],
+                injected_origins=("fault",) if i == 0 else (),
+            )
+        )
+    store.close()
+
+    from vigil.api.app import app
+
+    yield TestClient(app)
 
 
 def test_health_reports_postgres_by_using_it_not_by_assuming_it(client):
@@ -146,3 +153,75 @@ def test_the_dashboard_carries_no_emoji(client):
     assert not any(ord(ch) > 0x2500 and ord(ch) != 0x2014 for ch in html), (
         "non-ascii glyph outside the documented set found in the dashboard"
     )
+
+
+# ------------------------- reconciliation panel -------------------------
+# The panel was deliberately absent until the Phase 2 harness existed, because a panel that
+# renders zeros before any reconciliation has run claims a clean pipeline on no evidence.
+# These tests hold that line now that it is present.
+
+
+def insert_reconciliation(schema, windows, run=None):
+    settings = PostgresSettings.from_env()
+    with psycopg.connect(settings.dsn, autocommit=True) as conn:
+        conn.execute(f'SET search_path TO "{schema}"')
+        for w in windows:
+            conn.execute(
+                "INSERT INTO pipeline_health (window_start_ms, window_end_ms, channels,"
+                " readings, missing, duplicates, regressions, max_lag_ms, severity)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                w,
+            )
+        if run is not None:
+            conn.execute(
+                "INSERT INTO reconciliation_runs (topic, duration_s, readings, channels,"
+                " drift, missing, duplicates, regressions, broker_available, broker_consumed,"
+                " offset_drift) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                run,
+            )
+
+
+def test_reconciliation_reports_absent_evidence_as_absent(client, schema):
+    """No run means no claim. Zeros here would assert a clean pipeline nobody measured."""
+    body = client.get("/reconciliation").json()
+
+    assert body["has_evidence"] is False
+    assert body["latest_run"] is None
+    assert body["windows"] == []
+
+
+def test_reconciliation_returns_the_run_and_the_windows_behind_it(client, schema):
+    insert_reconciliation(
+        schema,
+        windows=[
+            (0, 30_000, 12, 12_000, 0, 0, 0, 400, "ok"),
+            (30_000, 60_000, 12, 11_500, 500, 0, 0, 900, "critical"),
+        ],
+        run=("sensor.readings", 900.0, 360_000, 12, 0, 0, 0, 0, 360_000, 360_000, 0),
+    )
+
+    body = client.get("/reconciliation").json()
+
+    assert body["has_evidence"] is True
+    assert body["latest_run"]["drift"] == 0
+    assert body["latest_run"]["offset_drift"] == 0
+    assert body["latest_run"]["broker_available"] == body["latest_run"]["broker_consumed"]
+    assert len(body["windows"]) == 2
+    # Newest first, the way an operator reads it.
+    assert body["windows"][0]["window_start_ms"] == 30_000
+
+
+def test_a_disturbed_window_is_counted_separately_from_a_clean_one(client, schema):
+    insert_reconciliation(
+        schema,
+        windows=[
+            (0, 30_000, 12, 12_000, 0, 0, 0, 400, "ok"),
+            (30_000, 60_000, 12, 11_500, 500, 0, 0, 900, "critical"),
+            (60_000, 90_000, 12, 12_000, 0, 3, 0, 500, "warning"),
+        ],
+    )
+
+    body = client.get("/reconciliation").json()
+
+    assert body["windows_by_severity"] == {"ok": 1, "critical": 1, "warning": 1}
+    assert body["disturbed_windows"] == 2

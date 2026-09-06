@@ -1,0 +1,300 @@
+Vigil
+
+Context-conditioned anomaly detection on a streaming backbone · detection spine, reconciliation, conditioning
+
+Episodes recorded
+54
+Hot-path latency p99
+22.07 ms
+budget 250 ms · 337 windows
+Model latency p99
+16.87 ms
+chronos-bolt-tiny · off critical path
+Postgres
+up
+uptime 9 s
+DETECTORS
+
+Episodes raised by each detector over the same stream. Scores are on each detector's own scale and are not comparable between rows; the matched-alarm-budget comparison lives in the benchmark.
+
+chronos-bolt-tiny
+zscore
+chronos-bolt-tiny
+5 ep
+zscore
+49 ep
+RECONCILIATION
+
+Two counts derived independently: our own per-channel sequence ledger, and an audit of what the broker retained against what was consumed. Agreement between them is the only reason to believe either. Absent until a run has happened. Max lag is measured against the wall clock, so replaying a recorded topic honestly reports the age of the data; loss and lag are graded separately for exactly that reason.
+
+Ledger drift
+0
+360,000 readings · 12 channels
+Broker offset drift
+0
+360,000 retained · 360,000 consumed
+Missing / duplicate / reordered
+0 / 0 / 0
+over 18 s on sensor.readings
+Disturbed windows
+0
+46 windows read, 12 listed · every window graded ok
+Window start	Readings	Missing	Duplicates	Reordered	Max lag	Grade
+14:32:30	4,974	0	0	0	145,775 ms	
+○
+ok
+14:32:00	12,000	0	0	0	175,745 ms	
+○
+ok
+14:31:30	12,000	0	0	0	205,713 ms	
+○
+ok
+14:31:00	12,000	0	0	0	235,683 ms	
+○
+ok
+14:30:30	12,000	0	0	0	265,649 ms	
+○
+ok
+14:30:00	12,000	0	0	0	295,564 ms	
+○
+ok
+14:29:30	12,000	0	0	0	325,535 ms	
+○
+ok
+14:29:00	12,000	0	0	0	355,450 ms	
+○
+ok
+14:28:30	12,000	0	0	0	385,419 ms	
+○
+ok
+14:28:00	12,000	0	0	0	415,389 ms	
+○
+ok
+14:27:30	12,000	0	0	0	444,852 ms	
+○
+ok
+14:27:00	12,000	0	0	0	474,815 ms	
+○
+ok
+EPISODES
+
+Consecutive flagged windows merged into one incident. "Injected" is ground truth from the synthetic source, shown for inspection; no detector reads it.
+
+Channel	Detector	Peak	Windows	Duration	Status	Injected	Seen
+pump-03.flow_m3_h	
+zscore	51.8	2	40 s	
+●
+real	—	14:14:51
+pump-02.bearing_temp_c	
+zscore	86.9	2	40 s	
+●
+real	—	14:14:50
+pump-01.bearing_temp_c	
+zscore	90.6	2	40 s	
+●
+real	—	14:14:50
+pump-01.vibration_mm_s	
+zscore	23.8	2	40 s	
+●
+real	—	14:14:50
+pump-01.discharge_pressure_bar	
+zscore	171.1	4	60 s	
+●
+real	—	14:13:40
+pump-02.flow_m3_h	
+zscore	606.4	4	60 s	
+●
+real	—	14:13:40
+pump-02.discharge_pressure_bar	
+zscore	277.7	4	60 s	
+●
+real	—	14:13:40
+pump-02.vibration_mm_s	
+zscore	160.6	4	60 s	
+●
+real	—	14:13:27
+pump-01.flow_m3_h	
+zscore	282.7	4	60 s	
+●
+real	—	14:13:27
+pump-00.bearing_temp_c	
+zscore	306.9	4	60 s	
+●
+real	—	14:13:27
+pump-00.flow_m3_h	
+zscore	379.1	4	60 s	
+●
+real	—	14:12:55
+pump-03.discharge_pressure_bar	
+zscore	104.6	4	60 s	
+●
+real	—	14:12:55
+pump-00.discharge_pressure_bar	
+zscore	168.4	5	70 s	
+●
+real	—	14:12:28
+pump-00.vibration_mm_s	
+zscore	221.3	5	70 s	
+●
+real	—	14:12:28
+pump-03.bearing_temp_c	
+zscore	270.4	5	70 s	
+●
+real	variance_burst	14:12:28
+pump-03.vibration_mm_s	
+zscore	184.6	5	70 s	
+●
+real	—	14:12:28
+pump-01.bearing_temp_c	
+zscore	507.9	5	70 s	
+●
+real	—	14:12:28
+pump-01.vibration_mm_s	
+zscore	288.1	5	70 s	
+●
+real	—	14:12:28
+pump-03.flow_m3_h	
+zscore	411.4	5	70 s	
+●
+real	—	14:12:28
+pump-02.bearing_temp_c	
+zscore	593.4	5	70 s	
+●
+real	—	14:12:28
+pump-02.flow_m3_h	
+zscore	531.9	5	70 s	
+●
+real	—	14:12:28
+pump-02.discharge_pressure_bar	
+zscore	295.6	5	70 s	
+●
+real	—	14:12:27
+pump-02.vibration_mm_s	
+zscore	184.4	5	70 s	
+●
+real	—	14:12:27
+pump-01.discharge_pressure_bar	
+zscore	214.9	5	70 s	
+●
+real	—	14:12:27
+pump-00.bearing_temp_c	
+zscore	492.2	5	70 s	
+●
+real	—	14:12:27
+pump-01.flow_m3_h	
+zscore	380.8	5	70 s	
+●
+real	spike	14:12:27
+pump-00.flow_m3_h	
+zscore	380.6	5	70 s	
+●
+real	—	14:12:27
+pump-03.discharge_pressure_bar	
+zscore	128.0	5	70 s	
+●
+real	—	14:12:27
+pump-01.vibration_mm_s	
+zscore	11.8	3	50 s	
+●
+real	—	23:05:15
+pump-00.vibration_mm_s	
+zscore	9.5	1	30 s	
+●
+real	—	23:02:25
+pump-01.discharge_pressure_bar	
+zscore	13.5	1	30 s	
+●
+real	—	22:27:21
+pump-01.flow_m3_h	
+zscore	32.4	4	60 s	
+●
+real	—	22:27:21
+pump-01.vibration_mm_s	
+zscore	16.6	8	170 s	
+●
+real	—	22:27:21
+pump-00.vibration_mm_s	
+zscore	32.0	6	140 s	
+●
+real	—	22:27:20
+pump-00.flow_m3_h	
+zscore	33.6	17	210 s	
+●
+real	—	22:27:20
+pump-01.bearing_temp_c	
+zscore	27.9	29	340 s	
+●
+real	—	22:27:20
+pump-00.discharge_pressure_bar	
+zscore	57.6	28	440 s	
+●
+real	spike, level_shift	22:27:20
+pump-00.bearing_temp_c	
+zscore	112.2	40	450 s	
+●
+real	variance_burst, spike, level_shift	22:27:20
+pump-01.discharge_pressure_bar	
+zscore	18.3	7	120 s	
+●
+real	spike	22:27:20
+pump-01.flow_m3_h	
+zscore	21.2	10	120 s	
+●
+real	—	22:26:35
+pump-00.vibration_mm_s	
+zscore	21.2	6	110 s	
+●
+real	—	22:24:55
+pump-01.vibration_mm_s	
+zscore	15.8	9	210 s	
+●
+real	spike	22:24:45
+pump-01.flow_m3_h	
+zscore	82.1	16	220 s	
+●
+real	variance_burst	22:24:15
+pump-00.flow_m3_h	
+zscore	27.6	7	90 s	
+●
+real	—	22:23:55
+pump-00.bearing_temp_c	
+chronos-bolt-tiny	9.7	1	30 s	
+●
+real	—	22:23:45
+pump-01.discharge_pressure_bar	
+zscore	41.4	7	100 s	
+●
+real	level_shift, spike	22:23:35
+pump-01.discharge_pressure_bar	
+chronos-bolt-tiny	7.3	2	60 s	
+●
+real	—	22:23:15
+pump-00.discharge_pressure_bar	
+chronos-bolt-tiny	8.0	1	30 s	
+●
+real	—	22:23:05
+pump-01.flow_m3_h	
+chronos-bolt-tiny	6.7	1	30 s	
+●
+real	—	22:22:45
+pump-00.vibration_mm_s	
+zscore	33.6	5	80 s	
+●
+real	—	22:22:45
+pump-00.bearing_temp_c	
+chronos-bolt-tiny	6.8	1	30 s	
+●
+real	—	22:22:35
+pump-01.bearing_temp_c	
+zscore	23.7	7	90 s	
+●
+real	—	22:22:05
+pump-00.flow_m3_h	
+zscore	22.9	4	70 s	
+●
+real	—	22:21:45
+pump-01.discharge_pressure_bar	
+zscore	10.9	2	40 s	
+●
+real	—	22:21:25
+Every panel reads stored data; nothing here is computed for display. Refreshed 14:36:38.

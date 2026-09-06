@@ -1,15 +1,11 @@
-"""The Phase 1 dashboard: one self-contained HTML page, no build step.
+"""The dashboard, served as one string.
 
-Minimal on purpose. It shows what Phase 1 actually produces -- episodes, the two detectors
-side by side, and hot-path latency against its budget. The reconciliation and drift panel
-that story G1 calls "Must" needs the Phase 2 harness; it is **absent** here rather than
-present and showing zeros, because a panel reading "drift: 0" when nothing is measuring
-drift is worse than no panel. The React dashboard is Phase 6.
-
-Colours are the validated default categorical palette (slots 1 and 2 for the two
-detectors); both modes pass the all-pairs CVD, normal-vision and contrast gates. Detector
-identity is carried by a legend swatch *and* a written name, never by colour alone, and
-episode status ships as a glyph plus a word for the same reason.
+Shows episode counts, the two detectors side by side, hot-path latency against its budget,
+and the reconciliation panel that story G1 calls "Must". That panel was deliberately absent
+until the Phase 2 harness existed, on the grounds that a panel reading "drift: 0" when
+nothing is measuring drift is worse than no panel; it now reads from the harness's own
+tables and still refuses to render numbers when no reconciliation run has happened. The
+React dashboard is Phase 6.
 """
 
 DASHBOARD_HTML = """<!DOCTYPE html>
@@ -94,6 +90,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .s-real      .glyph { color: var(--critical); }
   .s-attributed .glyph { color: var(--warning); }
   .s-suppressed .glyph { color: var(--text-muted); }
+  .g-ok        .glyph { color: var(--good); }
+  .g-info      .glyph { color: var(--text-muted); }
+  .g-warning   .glyph { color: var(--warning); }
+  .g-critical  .glyph { color: var(--critical); }
   .det { display: inline-flex; align-items: center; gap: 7px; font-variant-numeric: normal; }
   .budget-ok { color: var(--good); }
   .budget-over { color: var(--critical); }
@@ -106,7 +106,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <header>
   <h1>Vigil</h1>
   <p class="sub">Context-conditioned anomaly detection on a streaming backbone &middot;
-     Phase 1: detection spine</p>
+     detection spine, reconciliation, conditioning</p>
 </header>
 
 <main>
@@ -119,6 +119,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
        comparison lives in the benchmark.</p>
     <div class="legend" id="legend"></div>
     <div class="bars" id="bars"></div>
+  </section>
+
+  <section class="card">
+    <h2>Reconciliation</h2>
+    <p class="hint">Two counts derived independently: our own per-channel sequence ledger,
+       and an audit of what the broker retained against what was consumed. Agreement between
+       them is the only reason to believe either. Absent until a run has happened. Max lag is
+       measured against the wall clock, so replaying a recorded topic honestly reports the
+       age of the data; loss and lag are graded separately for exactly that reason.</p>
+    <div id="reconciliation"><p class="empty">loading&hellip;</p></div>
   </section>
 
   <section class="card">
@@ -147,6 +157,14 @@ const STATUS = {
   suppressed:  { glyph: "\\u25CB", label: "suppressed" },
 };
 
+// Reconciliation grades, glyph plus word for the same reason as status.
+const GRADE = {
+  ok:       { glyph: "○", label: "ok" },
+  info:     { glyph: "◌", label: "info" },
+  warning:  { glyph: "◐", label: "warning" },
+  critical: { glyph: "●", label: "critical" },
+};
+
 function tile(label, value, note) {
   const t = el("div", "tile");
   t.append(el("div", "label", label), el("div", "value", value));
@@ -155,10 +173,11 @@ function tile(label, value, note) {
 }
 
 async function load() {
-  const [health, dets, eps] = await Promise.all([
+  const [health, dets, eps, recon] = await Promise.all([
     fetch("/health").then(r => r.json()),
     fetch("/detectors").then(r => r.json()),
     fetch("/episodes?limit=60").then(r => r.json()),
+    fetch("/reconciliation?windows=60").then(r => r.json()),
   ]);
 
   // --- KPI row ---
@@ -259,9 +278,73 @@ async function load() {
     host.append(table);
   }
 
+  // --- reconciliation ---
+  // Absent evidence stays absent. Rendering zeros here would assert a clean pipeline that
+  // nothing had measured, which is the one claim this panel exists to avoid making.
+  const rec = document.getElementById("reconciliation");
+  rec.replaceChildren();
+  if (!recon.has_evidence) {
+    rec.append(el("p", "empty",
+      "no reconciliation run recorded — run reconciler.py, and note that it writes "
+      + "nothing under --no-store"));
+  } else {
+    const run = recon.latest_run;
+    const agree = run.broker_available === run.broker_consumed;
+    const row = el("div", "tiles");
+    const drift = tile("Ledger drift", fmt(run.drift),
+                       `${fmt(run.readings)} readings · ${fmt(run.channels)} channels`);
+    drift.querySelector(".value").className =
+      "value " + (run.drift === 0 ? "budget-ok" : "budget-over");
+    row.append(drift);
+    const audit = tile("Broker offset drift", fmt(run.offset_drift),
+                       `${fmt(run.broker_available)} retained · `
+                       + `${fmt(run.broker_consumed)} consumed`);
+    audit.querySelector(".value").className =
+      "value " + (agree && run.offset_drift === 0 ? "budget-ok" : "budget-over");
+    row.append(audit);
+    row.append(tile("Missing / duplicate / reordered",
+                    `${fmt(run.missing)} / ${fmt(run.duplicates)} / ${fmt(run.regressions)}`,
+                    `over ${Math.round(run.duration_s)} s on ${run.topic}`));
+    const disturbed = recon.disturbed_windows;
+    const shown = Math.min(recon.windows.length, 12);
+    row.append(tile("Disturbed windows", fmt(disturbed),
+                    `${fmt(recon.windows.length)} windows read, ${shown} listed · `
+                    + (disturbed ? "conditioning has something to explain with"
+                                 : "every window graded ok")));
+    rec.append(row);
+
+    if (recon.windows.length) {
+      const table = el("table");
+      const head = el("tr");
+      ["Window start", "Readings", "Missing", "Duplicates", "Reordered", "Max lag", "Grade"]
+        .forEach(h => head.append(el("th", null, h)));
+      const thead = el("thead");
+      thead.append(head);
+      table.append(thead);
+      const body = el("tbody");
+      for (const w of recon.windows.slice(0, shown)) {
+        const tr = el("tr");
+        tr.append(el("td", "muted", new Date(w.window_start_ms).toLocaleTimeString()));
+        tr.append(el("td", null, fmt(w.readings)));
+        tr.append(el("td", null, fmt(w.missing)));
+        tr.append(el("td", null, fmt(w.duplicates)));
+        tr.append(el("td", null, fmt(w.regressions)));
+        tr.append(el("td", null, fmt(w.max_lag_ms) + " ms"));
+        const g = GRADE[w.severity] || { glyph: "?", label: w.severity };
+        const gcell = el("td");
+        const gwrap = el("span", "status g-" + w.severity);
+        gwrap.append(el("span", "glyph", g.glyph), document.createTextNode(g.label));
+        gcell.append(gwrap);
+        tr.append(gcell);
+        body.append(tr);
+      }
+      table.append(body);
+      rec.append(table);
+    }
+  }
+
   document.getElementById("footer").textContent =
-    "Reconciliation and drift panel arrives with the Phase 2 harness. "
-    + "It is absent rather than showing zeros. Refreshed "
+    "Every panel reads stored data; nothing here is computed for display. Refreshed "
     + new Date().toLocaleTimeString() + ".";
 }
 
