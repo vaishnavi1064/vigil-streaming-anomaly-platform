@@ -39,6 +39,7 @@ from vigil.chaos.faults import (
     BrokerPause,
     ConsumerKill,
     Fault,
+    FlinkTaskManagerKill,
     NetworkPartition,
     wait_until,
 )
@@ -367,6 +368,8 @@ def build_fault(name: str, args: argparse.Namespace) -> Fault:
         return NetworkPartition(network=args.network)
     if name == "consumer-kill":
         return ConsumerKill()
+    if name == "flink-taskmanager-kill":
+        return FlinkTaskManagerKill()
     return BrokerKill()
 
 
@@ -378,6 +381,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     names = list(ALL_FAULTS) if args.all else [args.fault]
+    if args.all and not args.include_flink:
+        # Needs the flink profile running, so it is opt-in rather than a surprise failure
+        # for anyone who brought up only the default stack.
+        names = [n for n in names if not n.startswith("flink-")]
     if names == [None]:
         print("pick --fault NAME, or --all, or --list", file=sys.stderr)
         return 2
@@ -425,6 +432,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument("--with-detector", action="store_true", help="also run the detector")
     p.add_argument("--network", default="vigil_default")
+    p.add_argument(
+        "--include-flink",
+        action="store_true",
+        help="include the Flink fault in --all; needs `docker compose --profile flink up -d`",
+    )
     p.add_argument("--bootstrap", default=None)
     p.add_argument("--report-json", type=Path, default=None)
     return p.parse_args(argv)

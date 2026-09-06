@@ -317,9 +317,66 @@ class ConsumerKill(Fault):
         return consumer_group_lag(self.bootstrap, self.group, self.topic)
 
 
+@dataclass
+class FlinkTaskManagerKill(Fault):
+    """SIGKILL the Flink TaskManager mid-checkpoint, then let the cluster restore it.
+
+    The scenario that actually exercises two-phase commit. Everything else in this suite
+    tests Kafka's recovery or ours; this one tests the claim in docs/CORRECTNESS.md section
+    3a -- that source offsets live in the checkpoint, that the sink's open transaction is
+    aborted rather than committed, and that a `read_committed` consumer therefore sees each
+    window score exactly once across the failure.
+
+    Killing the TaskManager rather than cancelling the job is the point: a cancel is a
+    graceful shutdown with a final checkpoint, which proves nothing about crash recovery.
+
+    Recovery is **the job returning to RUNNING with all vertices up**, not the container
+    restarting. A TaskManager that is alive but has not re-acquired its slots has not
+    recovered, and the job is still down.
+    """
+
+    container: str = "vigil-flink-tm"
+    jobmanager_url: str = "http://localhost:8081"
+
+    def __post_init__(self) -> None:
+        self.name = "flink-taskmanager-kill"
+        self.description = "SIGKILL the Flink TaskManager, then wait for the job to restore"
+
+    def inject(self) -> None:
+        if not container_running(self.container):
+            raise FaultError(f"{self.container} is not running; is the flink profile up?")
+        docker("kill", "--signal=KILL", self.container)
+
+    def heal(self) -> None:
+        if not container_running(self.container):
+            docker("start", self.container)
+
+    def healthy(self) -> bool:
+        if not container_running(self.container):
+            return False
+        try:
+            import json
+            import urllib.request
+
+            with urllib.request.urlopen(f"{self.jobmanager_url}/jobs/overview", timeout=5) as r:
+                jobs = json.loads(r.read()).get("jobs", [])
+        except Exception:  # noqa: BLE001 - unreachable means not yet recovered
+            return False
+        running = [j for j in jobs if j.get("state") == "RUNNING"]
+        if not running:
+            return False
+        # A job counts as recovered only once every task is running again. Flink reports the
+        # job RUNNING while tasks are still being redeployed, and treating that as recovered
+        # would time the container restart rather than the job's return to service.
+        return all(j.get("tasks", {}).get("running", 0) == j.get("tasks", {}).get("total", -1)
+                   for j in running)
+
+
 ALL_FAULTS = {
     "broker-kill": BrokerKill,
     "broker-pause": BrokerPause,
     "network-partition": NetworkPartition,
     "consumer-kill": ConsumerKill,
+    # Needs the flink profile up: docker compose --profile flink up -d
+    "flink-taskmanager-kill": FlinkTaskManagerKill,
 }

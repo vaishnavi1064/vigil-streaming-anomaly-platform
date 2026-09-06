@@ -206,3 +206,28 @@ def test_a_pause_is_not_the_same_failure_as_a_kill():
     # the shape of a GC pause or a hung disk, where the client's own timeouts decide.
     assert "pause" not in BrokerKill().description.lower()
     assert "resume" in BrokerPause().description.lower()
+
+
+def test_the_flink_fault_is_registered_and_describes_itself():
+    from vigil.chaos.faults import FlinkTaskManagerKill
+
+    fault = FlinkTaskManagerKill()
+    assert ALL_FAULTS["flink-taskmanager-kill"] is FlinkTaskManagerKill
+    assert "TaskManager" in fault.description
+
+
+def test_the_flink_fault_refuses_to_inject_when_the_cluster_is_not_up():
+    from vigil.chaos.faults import FlinkTaskManagerKill
+
+    fault = FlinkTaskManagerKill(container="vigil-flink-nonexistent-xyz")
+    with pytest.raises(FaultError, match="flink profile"):
+        fault.inject()
+
+
+def test_an_unreachable_jobmanager_is_reported_unhealthy_rather_than_raising():
+    from vigil.chaos.faults import FlinkTaskManagerKill
+
+    fault = FlinkTaskManagerKill(
+        container="vigil-flink-nonexistent-xyz", jobmanager_url="http://127.0.0.1:1"
+    )
+    assert fault.healthy() is False
