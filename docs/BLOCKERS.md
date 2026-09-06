@@ -6,10 +6,15 @@
 
 ## Open — needs a human
 
-| # | Question | Why it needs a person | Options |
+_None open._ Both previously-open questions were answered on 2026-09-06 and are recorded
+below.
+
+## Decided by the architect
+
+| # | Question | Decision | Consequence |
 |---|---|---|---|
-| B-1 | **How should the VLM explainer be served?** | Every option costs something the builder has to choose between, and none is obviously right. The reference machine has 4 GB of VRAM, which will not hold a useful vision-language model, and no API key is present in the environment. | (a) A hosted endpoint behind `VLM_ENDPOINT`/`VLM_API_KEY` — works, costs money per flagged window, and makes the demo depend on a third party. (b) A small quantized local VLM on CPU — free and self-contained, but explanation latency will breach NFR-2's 5 s budget and the quality will be poor enough to be worth reporting honestly. (c) Ship the explainer interface with no model behind it and say so. **Nothing is stubbed to look present in the meantime.** |
-| B-2 | **Is the QLoRA fine-tune worth attempting on this hardware?** | Phase 5 calls for fine-tuning a 7–8B tool-calling model. 4 GB of VRAM makes that a multi-day proposition at best, and the agent currently uses a deterministic planner that needs no model at all. | (a) Skip it, document why, and keep the deterministic planner as the honest baseline. (b) Fine-tune something much smaller (1–2B) and report that it is not the model the plan specified. (c) Rent a GPU for a few hours. |
+| B-1 | How should the VLM explainer be served, given 4 GB of VRAM and no API key? | **Hosted endpoint behind env vars** (`VLM_ENDPOINT`, `VLM_API_KEY`, `VLM_MODEL`). | The explainer is built in full against that interface. With no key set it reports itself unavailable and detection is unaffected -- the documented degradation, not a stub pretending to work. Explanations appear the moment a key is supplied, and NFR-2's 5 s budget is measured against the real endpoint rather than assumed. Cost accepted: a per-flagged-window API cost and a third-party dependency on the rare path only. |
+| B-2 | Is the QLoRA fine-tune worth attempting on this hardware? | **A GPU will be rented**, so the fine-tune proceeds as the plan specifies. | The dataset builder and training script are written now so the rented time is spent training rather than authoring. Until the GPU is available the agent runs the deterministic planner, which stays as the baseline the fine-tuned model is measured against rather than merely replaced by. |
 
 ## Defaulted (proceeding under a recorded assumption)
 
@@ -20,14 +25,14 @@
 | D-3 | Inverters publish no expected-power field | Use `PR_Local` as the normalised residual for that topic | ADR-012 | Swap the `primary=True` metric in the mapping |
 | D-4 | PyFlink publishes no wheel for Windows on Python 3.12 | Run Flink as compose services behind a profile, job submitted to the cluster | ADR-022 | Nothing to reverse; this is also the deployment ARCHITECTURE.md describes |
 | D-5 | A faithful VUS-PR is subtle enough that a half-right version is a real risk | Dropped it; report detection latency and event-level rate beside point recall instead | ADR-023 | Implement the decayed-buffer weighting properly and re-add |
-| D-6 | The agent's planner needs a model that will not fit here | Deterministic rule-based planner behind a `Planner` protocol | ADR-026 | Implement the protocol with a model; the gate is unchanged either way |
+| D-6 | The agent's planner needs a model that will not fit here | Deterministic rule-based planner behind a `Planner` protocol | ADR-026 | Implement the protocol with the fine-tuned model once the GPU is available; the gate is unchanged either way |
 
 ## Known constraints on this machine
 
 | # | Constraint | Affects | Status |
 |---|---|---|---|
-| C-1 | RTX 3050 Ti Laptop, 4 GB VRAM. A 7–8B model will not fit at fp16. | Phase 4 VLM, Phase 5 QLoRA | **Now blocking** — escalated to B-1 and B-2 |
-| C-2 | No API key of any kind in the environment. | Phase 4 VLM | **Now blocking** — part of B-1 |
+| C-1 | RTX 3050 Ti Laptop, 4 GB VRAM. A 7–8B model will not fit at fp16. | Phase 4 VLM, Phase 5 QLoRA | **Resolved by B-1 and B-2**: VLM served remotely, fine-tune on rented hardware |
+| C-2 | No API key of any kind in the environment. | Phase 4 VLM | **Waiting on a key.** The explainer is built and its unavailable path is tested; it produces explanations as soon as `VLM_API_KEY` is set |
 | C-3 | Docker VM has 8.1 GB of the machine's 15.6 GB. | Phases 2–3 | Managed: Flink is behind a compose profile so JobManager + TaskManager (~2.5 GB) are started deliberately rather than always. ClickHouse and MinIO will need the same treatment. |
 | C-4 | Long-running measurements (the >= 4 h soak, the 200-series benchmark, the parallelism sweep) each need the machine to themselves. | Phases 2, 5 | Sequenced rather than parallel. The soak must run after chaos and scale, both of which deliberately break or saturate the stack. |
 
@@ -52,3 +57,5 @@ Recorded here rather than only in the docs that would flatter themselves by omit
 |---|---|---|
 | R-1 | Docker daemon not running at session start | Lives under `%LOCALAPPDATA%\Programs\DockerDesktop`; started it |
 | R-2 | Whether Flink could run at all on this machine | It runs. Job submitted, 1,056 windows scored, output bit-identical to the Python detector, 30 checkpoints completed at an average of 283 ms |
+| R-3 | B-1, how to serve the VLM | Answered 2026-09-06: hosted endpoint behind env vars |
+| R-4 | B-2, whether to attempt QLoRA | Answered 2026-09-06: a GPU will be rented, so it proceeds as planned |
