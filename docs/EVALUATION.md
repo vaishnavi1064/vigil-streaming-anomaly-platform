@@ -29,8 +29,14 @@ Q1 is the core contribution. Q2 is the honest-benchmark obligation. Q3 is the en
 **Used.**
 - Point-wise **AUC-PR** — anomalies are well under 1% of points, so precision-recall is the
   informative curve.
-- **VUS-PR / VUS-ROC** — threshold-independent and tolerant of small boundary offsets, which is
-  what a windowed detector actually produces.
+- **Range-tolerant AUC-PR / AUC-ROC** — threshold-independent and tolerant of small boundary
+  offsets, which is what a windowed detector actually produces. **VUS-style, and deliberately
+  not called VUS-PR:** tolerance is applied here by dilating the label set, so a detector
+  firing exactly on the labelled points is penalised at higher tolerances for not covering
+  the buffer (a perfect point-detector scores about 0.77, not 1.0). Published VUS weights
+  the buffer region instead. Ours is internally consistent, which is all a comparison
+  between two of our own detectors needs; it is **not** comparable to published VUS numbers
+  and no such comparison is made.
 - **Precision / recall / F1 at a matched alarm budget** — the only fair way to compare two
   detectors that emit differently-scaled scores: fix the number of alarms an operator would
   receive, then ask who spent them better.
@@ -106,7 +112,7 @@ will take, and it will be filled from a recorded command:
 | Recall, faults **inside** context windows | — | — | — |
 | Recall, faults inside **quiet** deploy windows | — | — | — |
 | Precision (incident-level) | — | — | — |
-| VUS-PR | — | — | — |
+| Range-tolerant AUC-PR | — | — | — |
 
 The quiet-deploy and inside-window rows are the ones that fail loudly under blanket suppression.
 

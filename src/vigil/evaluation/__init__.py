@@ -4,6 +4,13 @@ Results are pairs, never single numbers: false-positive reduction on its own is 
 suppressing everything, so it is always reported next to what it cost in recall (ADR-016).
 """
 
+from vigil.evaluation.metrics import (
+    SeriesScore,
+    auc_pr,
+    detection_delays,
+    score_at_budget,
+    score_series,
+)
 from vigil.evaluation.paired import (
     GroundTruth,
     ObservedEpisode,
@@ -20,6 +27,11 @@ __all__ = [
     "PairedComparison",
     "PairedResult",
     "TruthEpisode",
+    "SeriesScore",
     "TruthWindow",
+    "auc_pr",
+    "score_at_budget",
     "score_pass",
+    "score_series",
+    "detection_delays",
 ]
