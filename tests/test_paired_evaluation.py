@@ -16,6 +16,7 @@ from vigil.evaluation.paired import (
     PairedComparison,
     TruthEpisode,
     TruthWindow,
+    compare_fail_open,
     score_pass,
 )
 
@@ -350,3 +351,50 @@ def test_a_plan_with_quiet_windows_round_trips_that_flag(tmp_path):
     loaded = GroundTruth.from_plan(plan_path)
     assert any(not w.perturbed for w in loaded.windows), "quiet windows must survive the plan"
     assert any(w.perturbed for w in loaded.windows)
+
+
+# ------------------------- fail-open (ADR-007) -------------------------
+# The check exists because the failure it guards against is silent: if conditioning
+# suppresses while its signal source is down, the alerting path goes quiet exactly when an
+# operator has least reason to suspect it.
+
+
+def test_a_signal_less_conditioned_pass_matching_the_baseline_holds_fail_open():
+    shadow = [paged("a"), paged("b", 200_000, 260_000)]
+    check = compare_fail_open(shadow, list(shadow))
+
+    assert check.held
+    assert check.identical == 2
+    assert "HELD" in check.line()
+
+
+def test_an_episode_muted_without_any_context_breaks_fail_open():
+    shadow = [paged("a"), paged("b", 200_000, 260_000)]
+    signal_less = [muted("a"), paged("b", 200_000, 260_000)]
+
+    check = compare_fail_open(shadow, signal_less)
+
+    assert not check.held
+    assert check.suppressed == 1
+    assert check.attributed == 1
+    assert "BROKEN" in check.line()
+
+
+def test_an_episode_the_signal_less_pass_never_raised_breaks_fail_open():
+    """Conditioning must not change which episodes exist, only how they are judged."""
+    shadow = [paged("a"), paged("b", 200_000, 260_000)]
+
+    check = compare_fail_open(shadow, [paged("a")])
+
+    assert not check.held
+    assert check.missing_from_fail_open == 1
+
+
+def test_identity_ignores_status_so_a_changed_verdict_is_not_two_differences():
+    """A muted episode is one changed verdict, not a disappearance plus an appearance."""
+    check = compare_fail_open([paged("a")], [muted("a")])
+
+    assert check.missing_from_fail_open == 0
+    assert check.extra_in_fail_open == 0
+    assert check.identical == 0
+    assert check.suppressed == 1

@@ -8,7 +8,11 @@ The protocol from ADR-016, run end to end:
   3. **Shadow pass**: the detector with conditioning off. This is the unconditioned
      baseline, and it reads exactly the same records the conditioned pass will.
   4. **Conditioned pass**: same records, same seed, conditioning on.
-  5. Score both against the plan and report the pair.
+  5. **Fail-open pass**: conditioning on, pointed at a context topic that is empty. ADR-007
+     says a missing signal must never suppress, so this pass has to reproduce the shadow
+     pass episode for episode. Anything else means an outage in the context path is being
+     read as "nothing was deployed".
+  6. Score the passes against the plan and report the pair.
 
 The two passes write to separate Postgres schemas so neither can see or overwrite the
 other's episodes, and both replay the same topic from offset zero in their own consumer
@@ -37,7 +41,14 @@ from pathlib import Path
 import psycopg
 from psycopg.rows import dict_row
 
-from vigil.evaluation import GroundTruth, ObservedEpisode, PairedComparison, score_pass
+from vigil.evaluation import (
+    FailOpenCheck,
+    GroundTruth,
+    ObservedEpisode,
+    PairedComparison,
+    compare_fail_open,
+    score_pass,
+)
 from vigil.settings import KafkaSettings, PostgresSettings
 
 REPO = Path(__file__).resolve().parent
@@ -55,6 +66,9 @@ def reset_topics(bootstrap: str, kafka: KafkaSettings) -> None:
     wanted = {
         kafka.readings_topic: kafka.readings_partitions,
         kafka.context_topic: 1,
+        # Created and deliberately left empty: the fail-open pass needs a context topic that
+        # exists and says nothing, which is what a stalled signal producer looks like.
+        f"{kafka.context_topic}.empty": 1,
     }
     for future in admin.delete_topics(list(wanted), operation_timeout=30).values():
         try:
@@ -129,6 +143,7 @@ def main(argv: list[str] | None = None) -> int:
 
     shadow_schema = f"vigil_shadow_{stamp}"
     conditioned_schema = f"vigil_cond_{stamp}"
+    fail_open_schema = f"vigil_failopen_{stamp}"
 
     print(f"paired evaluation {stamp}: {args.duration:g}s at {args.rate:g} ev/s", flush=True)
     reset_topics(bootstrap, kafka)
@@ -218,10 +233,37 @@ def main(argv: list[str] | None = None) -> int:
         timeout=1800,
     )
 
-    # --- 5. score the pair ---
+    # --- 4b. fail-open: conditioning on, with nothing to condition on (ADR-007) ---
+    fail_open: FailOpenCheck | None = None
+    if args.verify_fail_open:
+        make_schema(postgres, fail_open_schema)
+        run_step(
+            "fail-open pass (conditioning ON, context topic empty)",
+            [
+                *detector_args,
+                "--group",
+                f"vigil-eval-failopen-{stamp}",
+                "--conditioning",
+                "--context-topic",
+                f"{kafka.context_topic}.empty",
+                "--min-corroborating-channels",
+                str(args.min_corroborating_channels),
+                "--min-scope-fraction",
+                str(args.min_scope_fraction),
+                "--synchrony-ms",
+                str(args.synchrony_ms),
+            ],
+            env={"PGOPTIONS": f"-c search_path={fail_open_schema}"},
+            timeout=1800,
+        )
+
+    # --- 5. score the passes ---
     truth = GroundTruth.from_plan(plan_path)
-    shadow = score_pass("shadow", read_episodes(postgres, shadow_schema), truth)
+    shadow_episodes = read_episodes(postgres, shadow_schema)
+    shadow = score_pass("shadow", shadow_episodes, truth)
     conditioned = score_pass("conditioned", read_episodes(postgres, conditioned_schema), truth)
+    if args.verify_fail_open:
+        fail_open = compare_fail_open(shadow_episodes, read_episodes(postgres, fail_open_schema))
     comparison = PairedComparison(
         shadow=shadow,
         conditioned=conditioned,
@@ -244,6 +286,9 @@ def main(argv: list[str] | None = None) -> int:
     print(comparison.table(), flush=True)
     print(flush=True)
     print(comparison.verdict(), flush=True)
+    if fail_open is not None:
+        print("")
+        print(fail_open.line(), flush=True)
 
     if args.report_json:
         args.report_json.parent.mkdir(parents=True, exist_ok=True)
@@ -276,6 +321,7 @@ def main(argv: list[str] | None = None) -> int:
                     "recall_loss": comparison.recall_loss,
                     "recall_loss_inside": comparison.recall_loss_inside,
                     "meets_target": comparison.meets_target,
+                    "fail_open": asdict(fail_open) if fail_open else None,
                 },
                 indent=2,
             ),
@@ -286,7 +332,10 @@ def main(argv: list[str] | None = None) -> int:
     if not args.keep_schemas:
         drop_schema(postgres, shadow_schema)
         drop_schema(postgres, conditioned_schema)
+        drop_schema(postgres, fail_open_schema)
 
+    if fail_open is not None and not fail_open.held:
+        return 2
     return 0 if comparison.meets_target else 1
 
 
@@ -309,6 +358,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--plan", type=Path, default=None)
     p.add_argument("--report-json", type=Path, default=None)
     p.add_argument("--keep-schemas", action="store_true", help="leave the per-pass schemas behind")
+    p.add_argument(
+        "--no-verify-fail-open",
+        dest="verify_fail_open",
+        action="store_false",
+        help="skip the third pass. On by default: a conditioning policy that suppresses when "
+        "its signal is missing is worse than no conditioning, so the check is not optional",
+    )
     p.add_argument("--bootstrap", default=None)
     return p.parse_args(argv)
 

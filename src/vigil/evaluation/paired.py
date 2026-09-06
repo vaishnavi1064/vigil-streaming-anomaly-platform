@@ -348,3 +348,71 @@ class PairedComparison:
             f"(tolerance <= {self.recall_loss_tolerance:.0%}). "
             f"Recall loss inside context windows {self.recall_loss_inside:+.1%}."
         )
+
+
+@dataclass
+class FailOpenCheck:
+    """Did conditioning stay out of the way when it had no signal to condition on?
+
+    ADR-007 makes this a correctness property rather than a preference: a policy that
+    suppresses while its context source is down has turned an outage in the signal path into
+    silence in the alerting path, which is the failure mode conditioning is most likely to
+    introduce and the hardest to notice. So the fail-open pass has to reproduce the
+    unconditioned baseline exactly -- not approximately, and not "close enough".
+    """
+
+    shadow_episodes: int
+    fail_open_episodes: int
+    identical: int
+    missing_from_fail_open: int
+    extra_in_fail_open: int
+    suppressed: int
+    attributed: int
+
+    @property
+    def held(self) -> bool:
+        return (
+            self.missing_from_fail_open == 0
+            and self.extra_in_fail_open == 0
+            and self.suppressed == 0
+            and self.attributed == 0
+        )
+
+    def line(self) -> str:
+        state = "HELD" if self.held else "BROKEN"
+        return (
+            f"fail-open (ADR-007) {state}: {self.identical:,} of {self.shadow_episodes:,} "
+            f"episodes identical to the unconditioned pass | "
+            f"{self.missing_from_fail_open} missing, {self.extra_in_fail_open} extra, "
+            f"{self.suppressed} suppressed, {self.attributed} attributed"
+        )
+
+
+def compare_fail_open(
+    shadow: list[ObservedEpisode], fail_open: list[ObservedEpisode]
+) -> FailOpenCheck:
+    """Compare a conditioned-but-signal-less pass against the unconditioned one.
+
+    Identity is on (channel, start, end, detector), not on status: status is precisely what
+    conditioning would have changed, so including it in the key would hide a changed verdict
+    as a missing episode plus an extra one.
+    """
+
+    def key(e: ObservedEpisode) -> tuple[str, int, int, str]:
+        return (e.channel, e.t_start_ms, e.t_end_ms, e.raised_by)
+
+    shadow_by_key = {key(e): e for e in shadow}
+    fail_open_by_key = {key(e): e for e in fail_open}
+    shared = shadow_by_key.keys() & fail_open_by_key.keys()
+
+    return FailOpenCheck(
+        shadow_episodes=len(shadow),
+        fail_open_episodes=len(fail_open),
+        identical=sum(1 for k in shared if shadow_by_key[k].status == fail_open_by_key[k].status),
+        missing_from_fail_open=len(shadow_by_key.keys() - fail_open_by_key.keys()),
+        extra_in_fail_open=len(fail_open_by_key.keys() - shadow_by_key.keys()),
+        suppressed=sum(
+            1 for k in shared if shadow_by_key[k].paged and not fail_open_by_key[k].paged
+        ),
+        attributed=sum(1 for e in fail_open if e.attributed_to is not None),
+    )

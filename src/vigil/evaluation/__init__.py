@@ -12,16 +12,19 @@ from vigil.evaluation.metrics import (
     score_series,
 )
 from vigil.evaluation.paired import (
+    FailOpenCheck,
     GroundTruth,
     ObservedEpisode,
     PairedComparison,
     PairedResult,
     TruthEpisode,
     TruthWindow,
+    compare_fail_open,
     score_pass,
 )
 
 __all__ = [
+    "FailOpenCheck",
     "GroundTruth",
     "ObservedEpisode",
     "PairedComparison",
@@ -30,6 +33,7 @@ __all__ = [
     "SeriesScore",
     "TruthWindow",
     "auc_pr",
+    "compare_fail_open",
     "score_at_budget",
     "score_pass",
     "score_series",
