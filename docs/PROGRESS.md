@@ -30,8 +30,8 @@ Phases are from `BUILD.md` section 7; stories from `docs/USER_STORIES.md`.
 |---|---|---|
 | A1 | Durable ingestion (gap-detect + backfill) | **Done, scope corrected** - live MQTT source + gap detection. Backfill is impossible on this feed; edge guarantee restated as at-most-once (ADR-011) |
 | A2 | Exactly-once processing (Flink, 2PC) | Not started - Phase 2. Today: at-least-once consume + idempotent sink = effectively-once at the sink (docs/CORRECTNESS.md) |
-| B1 | Reconciliation harness | Not started |
-| B2 | Pipeline-health signal | Not started |
+| B1 | Reconciliation harness | **Done** - per-channel sequence identity + independent broker-offset audit. Measured drift 0 over 252,000 readings. 42 tests |
+| B2 | Pipeline-health signal | **Done** - per-window `PipelineHealth` on `ops.context` as `kind=pipeline`, same wire and schema as a deploy marker (ADR-003). Emitted for clean windows too, so 'clean' is distinguishable from 'no signal' |
 | C1 | Z-score baseline detector | **Done** - Welford, decayed reference, mean + dispersion, 18 tests |
 | C2 | Foundation-model detector | **Done** - Chronos-Bolt-tiny zero-shot, batched off the critical path, 16 tests |
 | D1 | Reconciliation-gated detection | Not started |
@@ -41,7 +41,7 @@ Phases are from `BUILD.md` section 7; stories from `docs/USER_STORIES.md`.
 | F1 | Safety-gated remediation | Not started |
 | G1 | Live dashboard | **Partial** - episodes, per-detector comparison, latency vs. budget. Reconciliation panel absent until Phase 2, and the page says why |
 | H1 | Throughput harness | **Partial** - loadgen measures producer-side throughput (76,556 ev/s blast). Consumer-side and the parallelism curve are Phase 2 |
-| H2 | Chaos suite | Not started |
+| H2 | Chaos suite | **In progress** - 4 fault modes built (broker kill, broker pause, network partition, consumer kill); recovery verified by an independent replay of the log. 14 unit tests |
 | I1 | Honest detection benchmark | Not started - corpus downloaded, metrics chosen (ADR-013) |
 | I2 | CI quality gate | Not started |
 
@@ -52,6 +52,7 @@ Phases are from `BUILD.md` section 7; stories from `docs/USER_STORIES.md`.
 | When | Commit | What |
 |---|---|---|
 | 2026-09-05 | `67630bb` | **Phase 1 gate passed.** Wrote `docs/CORRECTNESS.md` (guarantee per boundary + what is not covered), filled `docs/EVALUATION.md` sections 5.1a-5.1d with measured numbers, wrote `README.md`. |
+| 2026-09-05 | `4e55212` | **Phase 2 started.** Reconciliation harness: per-channel sequence identity, independent broker-offset audit, per-window health signal on the context topic. Chaos suite: 4 fault modes with recovery verified by independent replay. Scale harness: parallelism sweep over a fixed pre-filled backlog. |
 | 2026-09-05 | `67630bb` | Minimal dashboard + FastAPI backend. Validated palette (all-pairs CVD/contrast pass in both modes), status as glyph+word, screenshot-verified in light and dark. Reconciliation panel deliberately absent with an on-page explanation. 11 API tests. |
 | 2026-09-05 | `0837598` | Zero-shot Chronos-Bolt detector running alongside the baseline, batched off the critical path via a bounded-queue worker thread. Measured the whole Bolt family on this CPU. Fixed a context-leakage bug and a threading race. 27 tests. |
 | 2026-09-05 | `d7a8f04`, `396a670` | Detection spine: event-time sliding windows (per-channel watermarks, lateness, thin-window drop), z-score baseline over Welford with a decayed reference, episode merging, Postgres schema + idempotent sink. 54 tests including 18 against real Postgres. |
@@ -84,6 +85,9 @@ is not hit twice.
 | 10 | Dashboard rendered blank with `Cannot read properties of undefined (reading 'firstChild')` | `Node.append()` returns undefined, so `table.append(el("thead")).firstChild` threw. Caught only by screenshotting the page; no unit test would have found it. | Build the `thead` as a named variable. |
 | 11 | The dashboard fix appeared to have no effect | The HTML is a module-level constant, so the running uvicorn process still held the old string. | Restarted the server. Worth remembering before debugging any future template change. |
 | 12 | `docker exec ... kafka-topics.sh` resolved to a Windows path | Git Bash rewrites POSIX-looking arguments. | `MSYS_NO_PATHCONV=1` prefix. |
+| 13 | The reconciliation harness emitted 187,631 health windows for a 7-minute run, nearly all with a single reading | Windows were closed against the **maximum** event time seen. Kafka serves partitions in bursts, so one partition raced minutes ahead and closed windows the others had not reached; each later reading then re-opened and re-emitted the same window. | Close windows against the **minimum** event time across sources, and never re-open a window that has already been emitted. |
+| 14 | After that fix, 51% of readings still arrived after their window closed | Sources were discovered lazily, on first delivery. A partition Kafka had not yet served was indistinguishable from one that did not exist, so the minimum was taken over a subset. | Register every partition on assignment via the rebalance callback; a registered-but-silent source blocks the watermark entirely. Plus an idleness timeout so an empty partition cannot stall forever. Result: 0% late. |
+| 15 | Every window of a replay graded `critical` | Lag is measured against the wall clock, so replaying a topic recorded minutes ago honestly reports minutes of lag. True, but it is a fact about the data's age, not a live disturbance -- and it would have made conditioning suppress everything. | Added `--ignore-lag` for replays and benchmarks; live runs still grade on lag. The measurement stays in the record either way; only the severity judgement changes. |
 
 ---
 
@@ -115,30 +119,17 @@ ADRs live in `docs/DECISIONS.md`. Design-phase ADR-001..008 predate this build.
 
 ## 5. Next up
 
-**Exact next action:** begin Phase 2. In order:
+**Exact next action:** finish the chaos suite run (`python chaos.py --all --report-json
+docs/results/chaos.json`), then:
 
-1. **Reconciliation harness (B1/B2)** before Flink. It is the load-bearing component -- the
-   pipeline-health signal it emits is what the core contribution conditions on -- and it can
-   be built and proven against the current consumer, then carried onto Flink unchanged.
-   Per-stage identity invariants over `(channel, seq)`: produced vs. consumed vs. episoded,
-   gaps and duplicates, emitted per window to the `ops.context` topic as `kind=pipeline`.
-2. **Chaos suite (H2)** with >= 3 fault modes: broker kill, consumer kill mid-window, network
-   partition. Assert recovery to a consistent state with bounded lag (NFR-7, 60 s).
-3. **Scale harness (H1)**: sweep consumer parallelism against the 6 partitions, produce the
-   throughput-vs-parallelism curve, and name where it plateaus. Fill `docs/SCALE.md`.
+1. Write `docs/CHAOS.md` from the measured results -- fault, recovery time, and the
+   consistency verdict from the independent replay.
+2. Run the scale sweep (`python scale.py --fill 300000 --parallelism 1,2,3,4,6,8`) and write
+   `docs/SCALE.md` with the curve and where it plateaus.
+3. Start the multi-hour soak for NFR-6 (>= 4 hours, drift 0) in the background. It has to run
+   *after* chaos and scale, since both deliberately break or saturate the stack.
 4. **Flink (A2)** last, once the harness can prove the migration preserved semantics. Java 17
-   is already present. Expect this to be the largest single piece of the project.
-5. Long soak for the zero-drift claim (NFR-6 wants >= 4 hours); start it early and let it run
-   while the rest proceeds.
-
-**State of the world for a fresh session.** `docker compose up -d --wait` brings up Kafka
-(KRaft, 6 partitions on `sensor.readings`, 1 on `ops.context`) and Postgres. `.venv` is a
-Python 3.12.10 virtualenv with the project installed editable plus torch and chronos.
-`Datasets/TSB-AD-M/` holds 200 labelled series. 202 tests pass. Three commands run the
-system end to end: `detector.py`, then `loadgen.py --scenario` or `mqtt_bridge.py`, then
-`uvicorn vigil.api:app`.
-
----
+   is present. Expect this to be the largest single piece of the project.
 
 ## 6. Phase 1 gate evidence
 

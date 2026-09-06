@@ -1,0 +1,21 @@
+[
+  {
+    "fault": "broker-kill",
+    "description": "SIGKILL the Kafka broker, then restart it",
+    "injected": true,
+    "recovery_s": 18.29036540002562,
+    "recovered_within_budget": true,
+    "budget_s": 60,
+    "produced": 72000,
+    "delivered": 72000,
+    "consumed": 72000,
+    "drift": 0,
+    "missing": 0,
+    "duplicates": 0,
+    "regressions": 0,
+    "offset_drift": 0,
+    "unhealthy_channels": 0,
+    "consistent": true,
+    "notes": []
+  }
+]
