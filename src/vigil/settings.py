@@ -90,3 +90,20 @@ class PostgresSettings:
             f"PostgresSettings(host={self.host!r}, port={self.port}, "
             f"user={self.user!r}, password=<redacted>, database={self.database!r})"
         )
+
+@dataclass(frozen=True)
+class MqttSettings:
+    """The public solar-fleet feed. No credentials: the broker is open and anonymous."""
+
+    host: str
+    port: int
+    topic: str
+
+    @classmethod
+    def from_env(cls) -> MqttSettings:
+        load_env()
+        return cls(
+            host=required("MQTT_HOST"),
+            port=required_int("MQTT_PORT"),
+            topic=required("MQTT_TOPIC"),
+        )
