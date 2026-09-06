@@ -334,11 +334,16 @@ the wrong tool" is a stronger finding than an unexamined win.
 | Live bridge throughput | **242 readings/s** from 1,387 MQTT messages over 45 s, 336 channels, 0 gaps | `python mqtt_bridge.py --topic inverters --duration 45` | Phase 1 |
 | Scenario mode | 60,000 readings + 12 context markers over 150 s at a 400 ev/s target, 0 failures | `python loadgen.py --rate 400 --duration 150 --scenario` | Phase 1 |
 
-The producer is not the bottleneck: it clears the 20,000 events/s NFR-4 target by 3.8x on its
-own, and a single-threaded Python consumer replays at 43,160/s. Neither is an end-to-end
-throughput claim - the topic was pre-filled for the consumer measurement, so the two were
-not running against each other. The **throughput-vs-parallelism curve, backpressure
-behaviour and end-to-end figure are Phase 2 and are not yet measured.**
+The producer is not the bottleneck: it clears the 20,000 events/s NFR-4 target by 3.8x on
+its own. Neither figure is an end-to-end throughput claim - the topic was pre-filled for the
+consumer measurement, so the two were not running against each other.
+
+The Phase 1 consumer figure above (43,160 readings/s) has since been superseded by a proper
+sweep over a 3,928,127-record backlog: **94,495 readings/s** on one consumer and a plateau of
+**170,414 readings/s** at three to six consumers over six partitions. NFR-4 is met with room
+to spare; **NFR-5's near-linear claim is not met** - six consumers buy 1.80x. The curve, the
+plateau, what binds it, and the rebalance re-delivery the sweep exposed are all in
+`docs/SCALE.md`.
 
 The live feed's own rate (~242 readings/s on `inverters`, ~4,000/s achievable on `strings`) is
 far below the throughput target. That is a property of the source, not of the pipeline, and is
