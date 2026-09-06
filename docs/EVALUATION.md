@@ -143,16 +143,94 @@ the wrong tool" is a stronger finding than an unexamined win.
 |---|---|---|---|
 | Producer throughput, blast mode, single process | **76,556 events/s** sustained over 20 s, 0 delivery failures | `python loadgen.py --rate 0 --duration 20 --channels 16` | Phase 1 |
 | Producer throughput, target-rate mode | **1,999 events/s** against a 2,000 target | `python loadgen.py --rate 2000 --duration 10` | Phase 1 |
+| Consumer throughput, replay of a filled topic | **43,160 readings/s** over 1,682,409 readings | `python detector.py --from-beginning` | Phase 1 |
 | Live bridge throughput | **242 readings/s** from 1,387 MQTT messages over 45 s, 336 channels, 0 gaps | `python mqtt_bridge.py --topic inverters --duration 45` | Phase 1 |
 | Scenario mode | 60,000 readings + 12 context markers over 150 s at a 400 ev/s target, 0 failures | `python loadgen.py --rate 400 --duration 150 --scenario` | Phase 1 |
 
 The producer is not the bottleneck: it clears the 20,000 events/s NFR-4 target by 3.8x on its
-own. The consumer side, the throughput-vs-parallelism curve and backpressure behaviour are
-Phase 2 and are **not yet measured** — no claim is made about end-to-end throughput here.
+own, and a single-threaded Python consumer replays at 43,160/s. Neither is an end-to-end
+throughput claim - the topic was pre-filled for the consumer measurement, so the two were
+not running against each other. The **throughput-vs-parallelism curve, backpressure
+behaviour and end-to-end figure are Phase 2 and are not yet measured.**
 
 The live feed's own rate (~242 readings/s on `inverters`, ~4,000/s achievable on `strings`) is
 far below the throughput target. That is a property of the source, not of the pipeline, and is
 exactly why the synthetic harness is retained (ADR-014).
+
+### 5.1a The Phase 1 end-to-end gate run
+
+Loadgen and the detector running against each other, live, for 7 minutes:
+
+```
+python loadgen.py --rate 600 --duration 420 --channels 8 --scenario \
+    --deploys-per-hour 60 --faults-per-hour 45 --seed 20260905 \
+    --write-plan docs/results/phase1-gate-plan.json
+python detector.py --from-beginning --group vigil-gate --stop-after-idle-s 25
+```
+
+| | |
+|---|---|
+| Readings produced / consumed | **252,000 / 252,000** (exact) |
+| Delivery failures | 0 |
+| Late readings (behind the watermark) | **0** |
+| Windows emitted / scored / cold / thin-dropped | 360 / 352 / 8 / 0 |
+| Windows flagged -> episodes | 213 -> **24** (189 merged into existing incidents) |
+| Injected ground truth inside episodes | level_shift 3, spike 5, variance_burst 2 |
+| Foundation model submitted / scored / **dropped** | 360 / 296 / **0** |
+
+Produced and consumed counts match exactly and nothing arrived behind its watermark. That is
+a single-consumer, single-run observation, **not** the zero-drift claim: that claim needs the
+Phase 2 reconciliation harness over a multi-hour run, and is not made here.
+
+### 5.1b Per-detector latency, measured
+
+| Detector | Path | Windows | p50 | p95 | p99 | max | Budget |
+|---|---|---|---|---|---|---|---|
+| `zscore` | hot | 352 | 0.312 ms | 0.387 ms | **0.493 ms** | 5.879 ms | 250 ms p99 (NFR-1) |
+| `chronos-bolt-tiny` | off critical | 296 | 6.298 ms | 24.180 ms | **34.833 ms** | 35.197 ms | not bound by NFR-1 |
+
+The hot path clears its budget by roughly 500x, so NFR-1 is met with large headroom and is
+plainly not the binding constraint on this design.
+
+**An honest discrepancy worth naming.** In isolation chronos-bolt-tiny costs 0.64 ms per
+window at batch 32. In this run it cost 34.8 ms p99 amortised, 54x worse. The cause is batch
+starvation, not the model: 296 windows over 466 s arrived across 91 batches, roughly 3.3
+windows each, so nearly every forward pass paid close to fixed overhead for an almost empty
+batch. Batching only pays when there is enough window throughput to fill a batch, and at 8
+channels with a 10 s slide the stream produces about 0.8 windows/s. This is a property of the
+measurement conditions and would improve with more channels; it is recorded rather than
+smoothed over, and the isolated figure is not presented as the operational one.
+
+### 5.1c Chronos-Bolt model sizes on this CPU
+
+Measured directly: context 256, horizon 12, median of repeated calls.
+
+| Checkpoint | Params | Batch 1 | Batch 32 (total) | Batch 32 (per window) |
+|---|---|---|---|---|
+| `chronos-bolt-tiny` | 8.7M | 5.5 ms | 20.5 ms | 0.64 ms |
+| `chronos-bolt-mini` | 21.2M | 7.7 ms | 36.9 ms | 1.15 ms |
+| `chronos-bolt-small` | 47.7M | 13.1 ms | 94.4 ms | 2.95 ms |
+| `chronos-bolt-base` | 205.3M | 33.1 ms | 298.4 ms | 9.32 ms |
+
+The base model's *batch* takes 298 ms, so the last window in a batch would breach a 250 ms
+per-window hot-path budget on its own. That is the concrete number behind ADR-017 keeping the
+model off the critical path, and behind choosing tiny as the default.
+
+### 5.1d Where the two detectors disagree
+
+Over the same 252,000 readings, each at its own threshold:
+
+| Detector | Episodes | Avg peak score | Max peak score |
+|---|---|---|---|
+| `zscore` (threshold 8.0) | 19 | 33.9 | 112.2 |
+| `chronos-bolt-tiny` (threshold 6.0) | 5 | 7.7 | 9.7 |
+
+These counts are **not** a quality comparison. The thresholds were never calibrated against
+each other, so the two detectors are spending different alarm budgets; reading "the baseline
+found more" as "the baseline is better" is exactly the error the matched-alarm-budget rule in
+section 2 exists to prevent. The honest comparison is section 4's TSB-AD-M benchmark, which is
+not yet run. What this run does establish is that both detectors are live on the same stream
+and producing independently attributable episodes.
 
 ### 5.2 Latency budgets
 
@@ -168,7 +246,8 @@ Pinning the 250 ms budget to a foundation model on this laptop would not be hone
 this machine has 4 GB of VRAM. The model is chosen to fit the budget rather than the budget
 stretched to fit the model.
 
-**Per-detector latency: not yet measured.** Phase 1 (baseline) and Phase 2 (final targets).
+Per-detector latency is measured in section 5.1b. Final targets are locked after Phase 2
+produces the scaling curve.
 
 ---
 
