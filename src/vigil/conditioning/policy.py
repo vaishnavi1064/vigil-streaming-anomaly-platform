@@ -82,38 +82,73 @@ class Attribution:
 
 
 class FlaggedWindowIndex:
-    """Which channels were flagged in which window. The corroboration evidence.
+    """When each channel was flagged. The corroboration evidence.
 
-    Deliberately kept as a plain index rather than derived on demand: the policy asks "were
-    this channel's in-scope siblings also flagged at that moment", and answering that from
-    storage per episode would put a query on the decision path.
+    Records episode **start times**, not just which window bucket they fell in. That
+    distinction is the difference between a working discriminator and a broken one, and it
+    was found by measurement rather than reasoning: the first version asked only "were this
+    channel's in-scope siblings also flagged in this window", and at realistic anomaly
+    density the answer was almost always yes by coincidence. Measured over 900 s with 12
+    channels, that version returned `isolated` zero times out of 79 episodes and suppressed
+    every real fault inside a quiet deploy window (docs/EVALUATION.md, v1).
+
+    Synchrony is what actually separates the two cases. A deploy artifact hits the channels
+    it touched at the same instant -- a collector restart blips them together. Two
+    independent faults landing in the same 30-second bucket are not synchronised to the
+    second. So corroboration asks whether siblings started *together*, within a tolerance
+    far tighter than a window.
     """
 
-    def __init__(self, window_ms: int = 30_000) -> None:
+    def __init__(self, window_ms: int = 30_000, synchrony_ms: int = 5_000) -> None:
         self.window_ms = window_ms
-        self._by_window: dict[int, set[str]] = {}
+        self.synchrony_ms = synchrony_ms
+        # channel -> sorted start times. Bounded by eviction, not by count, because the
+        # useful horizon is "as long as a context event can last", not a fixed depth.
+        self._starts: dict[str, list[int]] = {}
 
     def record(self, channel: str, t_start_ms: int, t_end_ms: int) -> None:
-        for start in self._windows_spanning(t_start_ms, t_end_ms):
-            self._by_window.setdefault(start, set()).add(channel)
+        starts = self._starts.setdefault(channel, [])
+        starts.append(t_start_ms)
+        if len(starts) > 1 and starts[-1] < starts[-2]:
+            starts.sort()
 
-    def flagged_in(self, t_start_ms: int, t_end_ms: int) -> set[str]:
+    def synchronous_with(self, t_start_ms: int, tolerance_ms: int | None = None) -> set[str]:
+        """Channels whose episode began within `tolerance_ms` of this one."""
+        tolerance = self.synchrony_ms if tolerance_ms is None else tolerance_ms
         out: set[str] = set()
-        for start in self._windows_spanning(t_start_ms, t_end_ms):
-            out |= self._by_window.get(start, set())
+        for channel, starts in self._starts.items():
+            if any(abs(start - t_start_ms) <= tolerance for start in starts):
+                out.add(channel)
         return out
 
-    def _windows_spanning(self, t_start_ms: int, t_end_ms: int) -> list[int]:
-        first = (t_start_ms // self.window_ms) * self.window_ms
-        last = (t_end_ms // self.window_ms) * self.window_ms
-        return list(range(first, last + self.window_ms, self.window_ms))
+    def flagged_in(self, t_start_ms: int, t_end_ms: int) -> set[str]:
+        """Channels flagged anywhere in this span. Retained for the loose comparison.
+
+        Kept so the strict and loose criteria can be measured against each other rather
+        than one silently replacing the other.
+        """
+        out: set[str] = set()
+        for channel, starts in self._starts.items():
+            if any(t_start_ms <= start <= t_end_ms for start in starts):
+                out.add(channel)
+        return out
 
     def evict_before(self, t_ms: int) -> None:
-        for start in [s for s in self._by_window if s + self.window_ms < t_ms]:
-            del self._by_window[start]
+        for channel in list(self._starts):
+            kept = [s for s in self._starts[channel] if s >= t_ms]
+            if kept:
+                self._starts[channel] = kept
+            else:
+                del self._starts[channel]
 
     def __len__(self) -> int:
-        return len(self._by_window)
+        """Channels tracked."""
+        return len(self._starts)
+
+    @property
+    def total_recorded(self) -> int:
+        """Episode starts held. This is what eviction actually bounds."""
+        return sum(len(v) for v in self._starts.values())
 
 
 @dataclass
@@ -127,6 +162,10 @@ class ConditioningThresholds:
 
     min_corroborating_channels: int = 2
     min_scope_fraction: float = 0.25
+    # How close together two channels must move to count as moving *together*. Far tighter
+    # than a window on purpose: at a 30 s window the criterion was satisfied by coincidence
+    # and stopped discriminating entirely (docs/EVALUATION.md, v1).
+    synchrony_ms: int = 5_000
     # A pipeline event with no loss, no duplication and only mild lag has no mechanism by
     # which it could have distorted a value, so it explains nothing.
     pipeline_requires_disturbance: bool = True
@@ -234,19 +273,19 @@ class ConditioningPolicy:
         )
 
     def _consider_scoped(self, episode: Episode, event: ContextEvent) -> Attribution:
-        """The corroboration test, which is where the discrimination happens."""
+        """The corroboration test, which is where the discrimination happens.
+
+        Asks whether the channel's in-scope siblings moved *at the same moment*, not merely
+        somewhere in the same window. The looser version was measured and did not
+        discriminate at all.
+        """
         scope = set(event.scope)
-        flagged = self.index.flagged_in(episode.t_start_ms, episode.t_end_ms)
-        siblings = (flagged & scope) if scope else flagged
+        synchronous = self.index.synchronous_with(episode.t_start_ms, self.thresholds.synchrony_ms)
+        siblings = (synchronous & scope) if scope else synchronous
         siblings.discard(episode.channel)
         corroborating = len(siblings) + 1
         scope_size = len(scope) if scope else corroborating
 
-        # A scope of one offers no corroboration at all: there are no siblings whose calm
-        # could exonerate the channel, and none whose movement could implicate it. The
-        # honest answer is "cannot tell", and the fail-open principle says that raises.
-        # Attributing here would also hand anyone a trivial way to suppress everything --
-        # declare every deploy single-channel.
         enough_channels = corroborating >= self.thresholds.min_corroborating_channels
         enough_fraction = corroborating / scope_size >= self.thresholds.min_scope_fraction
 
@@ -254,9 +293,9 @@ class ConditioningPolicy:
             return self._attribute(
                 event,
                 (
-                    f"{corroborating} of {scope_size} channels {event.event_id} touched "
-                    f"moved together in this window, which is what a change to them looks "
-                    f"like"
+                    f"{corroborating} of the {scope_size} channels {event.event_id} touched "
+                    f"moved within {self.thresholds.synchrony_ms / 1000:g}s of each other, "
+                    f"which is what a change to all of them looks like"
                 ),
                 Verdict.CORROBORATED,
                 corroborating=corroborating,
@@ -270,9 +309,10 @@ class ConditioningPolicy:
             )
         else:
             reason = (
-                f"{episode.channel} moved alone while the other {scope_size - 1} channels "
-                f"{event.event_id} touched stayed calm; a change affecting all of them "
-                f"would not single one out"
+                f"{episode.channel} moved alone -- none of the other {scope_size - 1} "
+                f"channels {event.event_id} touched moved within "
+                f"{self.thresholds.synchrony_ms / 1000:g}s of it; a change affecting all of "
+                f"them would not single one out"
             )
         return Attribution(
             status=EpisodeStatus.REAL,

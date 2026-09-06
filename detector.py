@@ -29,7 +29,11 @@ from collections import Counter
 
 from confluent_kafka import Consumer, KafkaError, TopicPartition
 
-from vigil.conditioning.policy import ConditioningPolicy, ConditioningThresholds
+from vigil.conditioning.policy import (
+    ConditioningPolicy,
+    ConditioningThresholds,
+    FlaggedWindowIndex,
+)
 from vigil.conditioning.signals import KafkaContextSource
 from vigil.detectors.foundation import ChronosResidualDetector, FoundationModelUnavailable
 from vigil.detectors.offpath import OffPathScorer
@@ -294,9 +298,11 @@ def run(args: argparse.Namespace) -> int:
         context_source.start()
         conditioning = ConditioningPolicy(
             source=context_source,
+            index=FlaggedWindowIndex(synchrony_ms=args.synchrony_ms),
             thresholds=ConditioningThresholds(
                 min_corroborating_channels=args.min_corroborating_channels,
                 min_scope_fraction=args.min_scope_fraction,
+                synchrony_ms=args.synchrony_ms,
             ),
         )
 
@@ -551,6 +557,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "them. Below 2 the policy collapses into blanket suppression",
     )
     c.add_argument("--min-scope-fraction", type=float, default=0.25)
+    c.add_argument(
+        "--synchrony-ms",
+        type=int,
+        default=5_000,
+        help="how close together in-scope channels must move to count as moving together. "
+        "A deploy artifact blips its channels at the same instant; independent faults in "
+        "the same window are not synchronised",
+    )
 
     f = p.add_argument_group("foundation model (off the critical path, ADR-017)")
     f.add_argument(

@@ -234,8 +234,8 @@ def test_a_large_fraction_of_a_large_scope_is_corroboration():
 def test_the_isolated_reason_explains_the_reasoning_to_an_operator():
     policy = policy_with([deploy(scope=FLEET[:4])], flagged=[FLEET[0]])
     reason = policy.decide(episode(FLEET[0])).reason
-    assert "alone" in reason
-    assert "calm" in reason
+    assert "moved alone" in reason
+    assert "would not single one out" in reason
 
 
 # ------------------------- pipeline plausibility -------------------------
@@ -363,9 +363,16 @@ def test_the_index_can_be_evicted_so_it_does_not_grow_without_bound():
     index = FlaggedWindowIndex(window_ms=30_000)
     for i in range(200):
         index.record("a", i * 30_000, (i + 1) * 30_000)
-    before = len(index)
+    assert index.total_recorded == 200
     index.evict_before(150 * 30_000)
-    assert len(index) < before
+    assert index.total_recorded == 50
+
+
+def test_evicting_every_start_for_a_channel_drops_the_channel():
+    index = FlaggedWindowIndex(window_ms=30_000)
+    index.record("a", 1_000, 31_000)
+    index.evict_before(500_000)
+    assert len(index) == 0
 
 
 @pytest.mark.parametrize("channels", [1, 2, 4, 8])
@@ -392,3 +399,67 @@ def test_an_attribution_carries_the_event_not_just_its_id():
 def test_a_raised_episode_carries_no_event_to_persist():
     policy = policy_with([])
     assert policy.decide(episode(FLEET[0])).event is None
+
+
+# ------------------------- synchrony: the v1 failure -------------------------
+
+
+def test_channels_flagged_in_the_same_window_but_not_together_do_not_corroborate():
+    """The v1 failure, pinned.
+
+    Asking only "were this channel's in-scope siblings flagged in this window" returned
+    `isolated` zero times out of 79 episodes on a real run, and suppressed every real fault
+    inside a quiet deploy window: at realistic anomaly density two in-scope channels are
+    flagged in almost any 30-second bucket by coincidence.
+    """
+    index = FlaggedWindowIndex(window_ms=30_000, synchrony_ms=5_000)
+    index.record(FLEET[0], 60_000, 90_000)
+    index.record(FLEET[1], 82_000, 112_000)  # same window, 22s apart
+    policy = ConditioningPolicy(
+        source=StaticContextSource([deploy(scope=FLEET[:4])]),
+        index=index,
+        thresholds=ConditioningThresholds(synchrony_ms=5_000),
+    )
+    decision = policy.decide(episode(FLEET[0]))
+    assert decision.status is EpisodeStatus.REAL
+    assert decision.verdict is Verdict.ISOLATED
+
+
+def test_channels_moving_within_the_synchrony_window_do_corroborate():
+    # A collector restart blips the channels it serves at the same instant.
+    index = FlaggedWindowIndex(window_ms=30_000, synchrony_ms=5_000)
+    for channel in FLEET[:4]:
+        index.record(channel, 60_000, 90_000)
+    index.record(FLEET[1], 61_500, 91_500)
+    policy = ConditioningPolicy(
+        source=StaticContextSource([deploy(scope=FLEET[:4])]),
+        index=index,
+        thresholds=ConditioningThresholds(synchrony_ms=5_000),
+    )
+    assert policy.decide(episode(FLEET[0])).status is EpisodeStatus.ATTRIBUTED
+
+
+def test_the_synchrony_tolerance_is_what_decides_the_boundary():
+    index = FlaggedWindowIndex(window_ms=30_000)
+    index.record(FLEET[0], 60_000, 90_000)
+    index.record(FLEET[1], 68_000, 98_000)  # 8s apart
+
+    def decide(synchrony_ms):
+        return ConditioningPolicy(
+            source=StaticContextSource([deploy(scope=FLEET[:4])]),
+            index=index,
+            thresholds=ConditioningThresholds(synchrony_ms=synchrony_ms),
+        ).decide(episode(FLEET[0]))
+
+    assert decide(5_000).verdict is Verdict.ISOLATED
+    assert decide(10_000).verdict is Verdict.CORROBORATED
+
+
+def test_the_index_still_answers_the_loose_question_for_comparison():
+    # Kept so strict and loose can be measured against each other rather than one silently
+    # replacing the other.
+    index = FlaggedWindowIndex(window_ms=30_000, synchrony_ms=1_000)
+    index.record(FLEET[0], 60_000, 90_000)
+    index.record(FLEET[1], 85_000, 115_000)
+    assert index.flagged_in(60_000, 90_000) == {FLEET[0], FLEET[1]}
+    assert index.synchronous_with(60_000) == {FLEET[0]}

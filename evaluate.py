@@ -258,6 +258,7 @@ def main(argv: list[str] | None = None) -> int:
                         "threshold": args.threshold,
                         "min_corroborating_channels": args.min_corroborating_channels,
                         "min_scope_fraction": args.min_scope_fraction,
+                        "synchrony_ms": args.synchrony_ms,
                     },
                     "ground_truth": {
                         "faults": len(truth.faults),
@@ -300,6 +301,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--threshold", type=float, default=8.0)
     p.add_argument("--min-corroborating-channels", type=int, default=2)
     p.add_argument("--min-scope-fraction", type=float, default=0.25)
+    p.add_argument("--synchrony-ms", type=int, default=5_000)
     p.add_argument("--fp-target", type=float, default=0.40, help="NFR-8 half one")
     p.add_argument("--recall-tolerance", type=float, default=0.05, help="NFR-8 half two")
     p.add_argument("--plan", type=Path, default=None)
