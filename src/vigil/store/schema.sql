@@ -91,3 +91,49 @@ CREATE TABLE IF NOT EXISTS agent_actions (
 );
 
 CREATE INDEX IF NOT EXISTS agent_actions_episode_idx ON agent_actions (episode_id);
+
+-- The per-window pipeline-health signal from the reconciliation harness. This is both the
+-- correctness evidence and, from Phase 3, the input the detector conditions on -- so it is
+-- stored for every window including clean ones. A consumer must be able to tell "clean"
+-- from "no signal": conditioning fails open on a missing signal (ADR-007), and collapsing
+-- the two would make that rule unimplementable.
+CREATE TABLE IF NOT EXISTS pipeline_health (
+    window_start_ms BIGINT PRIMARY KEY,
+    window_end_ms   BIGINT NOT NULL,
+    channels        INTEGER NOT NULL,
+    readings        BIGINT NOT NULL,
+    missing         BIGINT NOT NULL,
+    duplicates      BIGINT NOT NULL,
+    regressions     BIGINT NOT NULL,
+    max_lag_ms      BIGINT NOT NULL,
+    severity        TEXT NOT NULL CHECK (severity IN ('ok', 'info', 'warning', 'critical')),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT pipeline_health_span CHECK (window_end_ms > window_start_ms)
+);
+
+CREATE INDEX IF NOT EXISTS pipeline_health_span_idx
+    ON pipeline_health (window_start_ms, window_end_ms);
+CREATE INDEX IF NOT EXISTS pipeline_health_disturbed_idx
+    ON pipeline_health (severity) WHERE severity <> 'ok';
+
+-- One row per reconciliation run: the evidence behind any zero-drift claim. Kept as history
+-- rather than a single current value, so a claim can be traced to the run that produced it.
+CREATE TABLE IF NOT EXISTS reconciliation_runs (
+    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    topic            TEXT NOT NULL,
+    duration_s       DOUBLE PRECISION NOT NULL,
+    readings         BIGINT NOT NULL,
+    channels         INTEGER NOT NULL,
+    -- Sum of per-channel (span - readings). Zero is the claim.
+    drift            BIGINT NOT NULL,
+    missing          BIGINT NOT NULL,
+    duplicates       BIGINT NOT NULL,
+    regressions      BIGINT NOT NULL,
+    -- The independent check: what the broker retained vs. what we consumed.
+    broker_available BIGINT NOT NULL,
+    broker_consumed  BIGINT NOT NULL,
+    offset_drift     BIGINT NOT NULL,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS reconciliation_runs_recent_idx ON reconciliation_runs (created_at DESC);

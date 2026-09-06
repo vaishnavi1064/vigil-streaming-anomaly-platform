@@ -1,0 +1,19 @@
+{
+  "duration_s": 33.7,
+  "readings": 252000,
+  "channels": 8,
+  "drift": 0,
+  "missing": 0,
+  "duplicates": 0,
+  "regressions": 0,
+  "health_windows": 187631,
+  "disturbed_windows": 187631,
+  "broker": {
+    "low_watermark": 0,
+    "log_end": 252000,
+    "available": 252000,
+    "consumed": 252000,
+    "offset_drift": 0
+  },
+  "unhealthy_channels": []
+}

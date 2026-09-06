@@ -239,4 +239,12 @@ def test_raw_readings_have_nowhere_to_go_in_this_schema(store):
             "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()"
         )
         tables = {r["table_name"] for r in cur.fetchall()}
-    assert tables == {"context_events", "episodes", "episode_scores", "agent_actions"}
+    assert tables == {
+        "context_events",
+        "episodes",
+        "episode_scores",
+        "agent_actions",
+        "pipeline_health",
+        "reconciliation_runs",
+    }
+    assert not any("reading" in t for t in tables)
