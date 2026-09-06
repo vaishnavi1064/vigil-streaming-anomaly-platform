@@ -15,12 +15,13 @@
 | Synthetic generator -> Kafka | **exactly-once into the log** | Producer idempotence is on, so a retry cannot duplicate a record | Built |
 | Kafka -> detector | **at-least-once** | Offsets commit after episodes are durable, so a crash replays rather than loses | Built |
 | Detector -> Postgres | **effectively-once** | The sink upserts on `(channel, t_start_ms, raised_by)`, so a replay re-derives the same rows instead of duplicating them | Built |
-| Inside Flink | exactly-once via 2PC + epoch fencing | — | **Phase 2, not built** |
-| Reconciliation drift = 0 over a multi-hour run | — | — | **Phase 2, not built** |
+| Inside Flink | **exactly-once** via 2PC: source offsets in the checkpoint, sink writes in a Kafka transaction committed on checkpoint completion, stable transactional-id prefix for epoch fencing | — | Built, running |
+| Reconciliation drift = 0 over a multi-hour run | — | — | **Not yet run.** Measured at zero over a 15-minute run; the >= 4-hour soak NFR-6 asks for has not been done |
 
 The end-to-end claim today is therefore: **at-most-once at the edge, exactly-once into the
-Kafka log, effectively-once at the episode sink.** It is *not* "exactly-once end to end",
-and it is not a zero-drift claim.
+Kafka log, exactly-once through the Flink job, effectively-once at the episode sink.** It is
+*not* "exactly-once end to end" -- the edge is weaker and is stated as such -- and the
+zero-drift claim is scoped to the durations actually measured, which is minutes, not hours.
 
 ---
 
@@ -68,6 +69,72 @@ windows dropped, 360 windows emitted.**
 
 ---
 
+## 3a. The Flink job, and what it changes
+
+`flink/scoring_job.py` runs the same detection the Python consumer does, with a genuinely
+stronger guarantee. The chain has three links and all three must hold or it is not a chain:
+
+1. The Kafka source reads `isolation.level=read_committed`, so it never sees records from
+   transactions that were later aborted.
+2. Source offsets live **in Flink's checkpoint**, not in a consumer group. A restart rewinds
+   to the checkpoint rather than to whatever was last committed out of band.
+3. The sink writes inside a Kafka transaction that commits when the checkpoint completes.
+   The two are the same two-phase commit: a failure between them replays from the checkpoint
+   and aborts the uncommitted transaction, so a `read_committed` consumer sees each window
+   score exactly once.
+
+The transactional-id prefix is stable across restarts on purpose. Kafka fences zombie
+producers by epoch, and it is that prefix that lets a restarted job reclaim and abort the
+transactions its previous incarnation left open, rather than leaving them to block consumers
+until they time out. The transaction timeout is set to 900 s against a 10 s checkpoint
+interval, because a transaction that expires before the checkpoint that would have committed
+it is **silent data loss**, not an error.
+
+State is RocksDB with incremental checkpoints. Per-channel detector state is one entry per
+channel held for the life of the job, so heap state would make the job's memory a function
+of fleet size; RocksDB keeps it a function of the working set. Checkpoints are unaligned, so
+barriers do not wait behind backpressured buffers -- which is what keeps them completing
+under exactly the load the scale and chaos harnesses generate.
+
+### Did the migration preserve the semantics?
+
+Asked two ways, because either alone is insufficient.
+
+**The arithmetic** (`tests/test_flink_parity.py`, 14 tests). The job's scoring rule is
+re-implemented from its source and compared against `vigil.detectors.zscore` on identical
+input; they agree to 1e-9. The tests also read the job's source and fail if the constants
+drift apart, so the two cannot silently diverge. This proves transcription, not execution.
+
+**The execution** (`flink_parity.py`). Both were run over the same Kafka topic and their
+outputs joined on `(channel, window_start_ms)`:
+
+| | |
+|---|---|
+| Windows scored by both | **1,056** |
+| Agreement within +/-0.5 | **1,056 / 1,056 (100%)** |
+| Median absolute difference | **0.0000** |
+| Maximum absolute difference | **0.0000** |
+| Signed bias (Flink - Python) | **+0.0000** |
+| Windows only Flink scored | 0 |
+| Windows only Python scored | 36 |
+
+The scores are identical, not merely close. The 36 windows only Python scored are the tail
+of the run, which Flink's watermark had not yet closed when the comparison was taken -- the
+expected difference between a job still running and a replay that ran to completion, and the
+reason the comparison is over the intersection rather than the union.
+
+Checkpointing over the same run: **30 completed, 2 failed**, average end-to-end duration
+283 ms, maximum 2,395 ms, average state size 7.99 MB. The two failures were during job
+startup, before the first successful checkpoint.
+
+**What this does not prove.** The comparison was taken from a job that had not been killed.
+A checkpoint-recovery scenario -- kill the TaskManager mid-checkpoint, verify the
+uncommitted transaction is aborted and replayed, and re-run this comparison afterwards -- is
+the test that would actually exercise two-phase commit. It is **not yet run**, and is listed
+in `docs/CHAOS.md` section 5 as a gap.
+
+---
+
 ## 4. Why the sink must be idempotent
 
 The detector commits Kafka offsets only after the episodes derived from those windows are
@@ -110,10 +177,15 @@ reconciliation harness and is not claimed here.**
 
 ## 6. Known gaps
 
-- No Flink yet, so no checkpointing, no RocksDB state backend, and no true two-phase commit.
-- No reconciliation harness, so no continuous proof and no pipeline-health signal -- which
-  also means the core conditioning mechanism has only its deploy-marker input so far.
-- No chaos suite, so recovery after a fault is untested.
+- **The Flink exactly-once path has not been fault-tested.** The job runs and its output is
+  bit-identical to the reference implementation, but no scenario has yet killed it
+  mid-checkpoint to verify the transaction is aborted and replayed. Until that runs, the
+  two-phase-commit claim rests on configuration and on Flink's own guarantees, not on
+  evidence from this deployment.
+- **Zero drift is measured over minutes, not hours.** NFR-6 asks for >= 4 hours. The longest
+  clean run so far is 15 minutes (360,000 readings, drift 0, offset drift 0).
+- The reconciliation harness audits the Python consumer's view of the log. It does not yet
+  audit the Flink job's output topic against its input.
 - Edge loss on the live feed is detectable but not repairable (ADR-011). The synthetic
   source has perfect sequence integrity by construction, which is why every correctness and
   chaos test runs against it rather than against the public feed.
