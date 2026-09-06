@@ -1,9 +1,8 @@
 # Correctness
 
 > Every guarantee here is scoped to exactly where it holds, and says what it does **not**
-> cover. A claim appears in this file only once something tests it. Phase 2 adds Flink,
-> true two-phase-commit exactly-once, and the reconciliation harness; until then this
-> document describes a narrower system honestly rather than describing the intended one.
+> cover. A claim appears in this file only once something tests it, and the gaps in section 6
+> are as much the point as the guarantees in section 1.
 
 ---
 
@@ -30,7 +29,7 @@ zero-drift claim is scoped to the durations actually measured, which is minutes,
 Counting messages cannot distinguish "processed a million events" from "processed one event
 a million times". So every reading carries a **per-channel monotonic sequence number**
 assigned at the ingestion boundary. Downstream, a missing number is a gap and a repeated
-number is a duplicate. That is the identity the Phase 2 reconciliation harness will check
+number is a duplicate. That is the identity the reconciliation harness checks
 per-stage invariants against, rather than comparing row counts.
 
 Readings are keyed by channel on the Kafka partitioner, so all of a channel's readings land
@@ -47,8 +46,8 @@ and narrowly.
 
 The windower is pure and clock-free: everything it decides is a function of the event
 timestamps it is handed. That is what makes the out-of-order behaviour testable directly
-rather than only observable in a running pipeline, and it is what lets Phase 2 hand the same
-semantics to Flink and compare the two.
+rather than only observable in a running pipeline, and it is what let the same semantics be
+handed to Flink and the two compared directly (section 3a).
 
 - **Watermark** = highest event time seen minus the allowed lateness, tracked **per
   channel**. Per channel because these are independent devices: one inverter falling silent
