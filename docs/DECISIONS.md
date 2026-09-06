@@ -172,5 +172,47 @@
 
 **Postscript, because it is the point of the ADR.** The bug was caught by a test asserting that a perfect detector scores 1.0. Without that test the metric would have shipped, every detector comparison in `docs/EVALUATION.md` would have been quietly skewed toward whichever detector smeared its output most, and the number would have looked entirely reasonable.
 
+## ADR-024 - Corroboration across scope as the discriminator, and why it had to be synchrony
+**Status:** accepted (Phase 3), revised once by measurement
+**Context:** `ARCHITECTURE.md` section 4 specified the v1 conditioning policy as "if a pipeline disturbance or active deploy overlaps window T, mark the flag attributed". That rule is blanket suppression: a real fault during a deploy is still a real fault, and the adversarial generator (ADR-015) exists specifically to catch a policy that behaves this way.
+**Decision:** Attribute an anomaly to a context event only when three things hold: the event's **scope** includes the channel; the excursion is **corroborated** by the channel's in-scope siblings moving **within a few seconds of it**; and, for pipeline events, the health record shows a **mechanism** -- actual loss, duplication or reordering -- that could have distorted a value. A pipeline window graded only on lag explains nothing, because lag delays a reading rather than changing it.
+**Alternatives:** overlap alone (the specified rule -- measured, and it destroys recall); magnitude or shape matching between the artifact and the excursion (needs a model of what each deploy does to each channel, which does not exist); suppressing during a window but re-raising afterwards (delays every real fault by the length of a deploy, which is exactly when delay is most costly).
+**Consequences and the correction.** The corroboration argument is physical: a deploy that perturbs telemetry perturbs the channels it touched -- a collector restart blips the whole batch -- while a real fault is a property of one device, since a bearing does not fail because a collector was redeployed. The first implementation asked whether in-scope siblings were flagged **anywhere in the same 30-second window**, and that version was measured and **failed**: `isolated` was returned zero times out of 79 episodes, and every real fault inside a quiet deploy window was suppressed. With 56 artifacts and 30 faults across 12 channels and overlapping deploys covering nearly the whole run, two in-scope channels are flagged in almost any window by coincidence. The fix is **synchrony**: siblings must have started within a tight tolerance (default 5 s), because a deploy artifact is simultaneous across its scope and two independent faults in the same window are not. Both measurements are published in `docs/EVALUATION.md` section 3.4; reporting only the second would be tuning until it passes. Cost: the tolerance is a parameter, and a genuinely slow-rolling deploy that perturbs its channels minutes apart will not be attributed.
+
+## ADR-025 - A scope of one explains nothing
+**Status:** accepted (Phase 3)
+**Context:** A context event scoped to a single channel has no siblings, so the corroboration test has no evidence in either direction.
+**Decision:** Raise the episode. "Cannot tell" is treated as "raise", by the same reasoning as fail-open.
+**Alternatives:** attribute (there is a deploy, it touched this channel, and nothing contradicts it); ask for more evidence (there is none to ask for).
+**Consequences:** Consistent with ADR-007: absence of evidence never suppresses. It also closes a trivial attack on the mechanism -- declaring every deploy single-channel would otherwise suppress everything. Cost: a genuinely narrow deploy that really did cause an excursion will page someone.
+
+## ADR-026 - The agent emits typed actions, never commands
+**Status:** accepted (Phase 4)
+**Context:** NFR-11 requires that 100% of agent actions pass a deterministic gate. Whether that is achievable at all depends on what an action is allowed to be.
+**Decision:** A closed set of typed verbs with typed parameters. No shell, no free-form API calls, no code. An unknown verb is rejected at parse time rather than forwarded. Nothing irreversible is in the set at all.
+**Alternatives:** shell commands behind an allow-list of binaries (to decide whether `sh -c "..."` is safe you must understand shell, at which point the gate is an interpreter with an attack surface); MCP tools with free-form arguments (better, but the arguments are still unconstrained); a model that self-limits (a planner that could be trusted to self-limit would not need a gate).
+**Consequences:** The gate becomes a lookup and a handful of range checks, which is why it can be tested exhaustively rather than sampled. Adding a verb requires an entry, a risk classification and a sandbox implementation, and that friction is the feature. Cost: the agent cannot do anything nobody anticipated -- which is the intended trade, and the reason `escalate_to_human` is always available and never counts against a budget.
+
+## ADR-027 - The gate never reads the agent's rationale
+**Status:** accepted (Phase 4)
+**Context:** A proposed action arrives with the reasoning behind it. The obvious design lets the gate weigh that reasoning.
+**Decision:** It does not. The gate reads the action and the episode. The rationale is recorded in the trace for a human and is not an input to the decision.
+**Alternatives:** weigh the rationale (a channel through which a model can persuade, and a component whose job is to be unpersuadable should not have one); weigh a confidence score (same objection, with a number instead of prose); have a second model review the first (two models that can be talked around instead of one).
+**Consequences:** A test proves a rationale claiming on-call approval and incident-time policy exemption receives the identical verdict to no rationale at all. Risk is a fixed lookup per verb rather than derived from parameters, for the same reason: a gate that re-derived risk could be argued into a different answer by a well-chosen parameter. Cost: the gate cannot be more permissive in a genuine emergency, which is what `escalate_to_human` is for.
+
+## ADR-028 - An attributed episode gets no remediation
+**Status:** accepted (Phase 4)
+**Context:** The agent acts on episodes. Conditioning marks some of them as explained by an operational event.
+**Decision:** Any state-changing action on an episode that is not `real` is refused by the gate. Read-only investigation is still allowed.
+**Alternatives:** act anyway (attributing an artifact to its cause and then silencing the channel would undo the attribution entirely); make it a planner rule (a planner is replaceable and this is a safety property, so it belongs in the gate).
+**Consequences:** The core contribution and the agent are interlocked: conditioning does not merely change what an operator sees, it changes what the system is permitted to do. Investigation stays available because investigating is not remediating, and an operator reviewing the system's reasoning needs the evidence reachable. Cost: a genuine fault mis-attributed by conditioning is also protected from remediation -- which is why the recall half of NFR-8 matters as much as the false-positive half.
+
+## ADR-029 - BM25 for runbook retrieval, not embeddings
+**Status:** accepted (Phase 4)
+**Context:** The agent's plan must be grounded in operational documents rather than improvised.
+**Decision:** Lexical BM25 over passages split at runbook headings, with each passage naming the actions it licenses.
+**Alternatives:** a dense retriever (weights to load, a service to run, and per-query latency, for a corpus of tens of documents); a hybrid (the complexity of both for a corpus this size); no retrieval, rules only (a plan with no citation is a plan whose wrongness is untraceable).
+**Consequences:** Queries here are dominated by exact operational vocabulary -- channel names, metric names, fault kinds -- which lexical matching handles well, and tokenisation keeps underscores so `bearing_temp_c` stays one term rather than becoming three. Splitting at headings rather than a fixed chunk size respects the fact that an operational document is already organised by symptom. The licence line is what makes retrieval *bound* the plan rather than merely inform it: the planner intersects its proposals with what the retrieved passages permit, so a wrong action is traceable to a document. Cost: a genuine paraphrase will be missed, and this is a real limitation rather than a theoretical one. When retrieval finds nothing the plan is to escalate, which is the correct answer to "the runbooks do not cover this".
+
 ---
 *Living log. Supersede, don't rewrite.*
