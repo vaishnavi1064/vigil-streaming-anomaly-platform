@@ -1,0 +1,18 @@
+{
+  "episodes": 400,
+  "actions_proposed": 1267,
+  "actions_executed": 1267,
+  "runs_with_no_proposal": 0,
+  "actions_executed_ungated": 0,
+  "grounded_action_rate": 1.0,
+  "gate_approval_rate": 1.0,
+  "sandbox_containment_rate": 1.0,
+  "safety_channel_compliance_rate": 1.0,
+  "abstention_correctness_rate": 1.0,
+  "escalation_rate": 0.070245,
+  "citation_rate": 0.970797,
+  "read_only_share": 0.531965,
+  "state_changing_share": 0.39779,
+  "safety_episodes": 56,
+  "abstention_episodes": 37
+}

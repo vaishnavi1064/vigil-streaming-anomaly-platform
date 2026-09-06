@@ -47,6 +47,13 @@ jobs:
       - name: Unit tests
         run: pytest -m "not integration and not slow" --timeout 300
 
+      # Phase 5's quality gate. Structural only -- grounding, gate approval, sandbox
+      # containment, safety compliance, abstention -- because the judged metrics need an
+      # LLM and there is no key (BLOCKERS C-2). It fails the build two ways: an absolute
+      # floor broken, or a rate drifting below the committed baseline. Needs no services.
+      - name: Agent quality gate
+        run: python agent_quality.py
+
   integration:
     name: integration tests
     runs-on: ubuntu-latest
