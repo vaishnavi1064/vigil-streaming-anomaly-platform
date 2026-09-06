@@ -1,0 +1,17 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Local runtime state: container volumes, model cache, measurement artifacts
+volumes/
+.hf-cache/
+*.log
+
+# Measured results are committed as markdown/CSV under docs/results/; raw dumps are not
+scratch/

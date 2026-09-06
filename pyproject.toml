@@ -1,0 +1,41 @@
+[project]
+name = "vigil"
+version = "0.1.0"
+description = "Context-conditioned real-time anomaly detection on a provably-correct streaming backbone"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "confluent-kafka>=2.6",
+    "psycopg[binary]>=3.2",
+    "python-dotenv>=1.0",
+    "numpy>=2.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-timeout>=2.3",
+    "ruff>=0.7",
+]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: needs the docker compose stack running (deselect with -m 'not integration')",
+    "slow: long-running soak or sweep; excluded from the default run",
+]
+addopts = "-q --strict-markers"
+timeout = 300
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
