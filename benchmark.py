@@ -253,14 +253,22 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     comparisons: list[Comparison] = []
+    # Why a series was dropped is part of the result, not noise before it. Truncating long
+    # series to keep the run tractable silently excludes every series whose labelled
+    # anomalies begin past the cut, which biases the corpus toward early-onset anomalies --
+    # so the count and the reason are reported with the aggregate rather than only scrolling
+    # past in the log.
+    skipped: dict[str, list[str]] = {"unreadable": [], "no_labels_in_window": [], "unscorable": []}
     for i, path in enumerate(paths, start=1):
         try:
             series = load_series(path, max_points=args.max_points, max_features=args.max_features)
         except (ValueError, IndexError) as exc:
             print(f"  [{i}/{len(paths)}] {path.name}: unreadable ({exc}), skipped", flush=True)
+            skipped["unreadable"].append(path.name)
             continue
         if int(series.labels.sum()) == 0:
             print(f"  [{i}/{len(paths)}] {path.name}: no labelled anomalies, skipped", flush=True)
+            skipped["no_labels_in_window"].append(path.name)
             continue
 
         results, seconds, window_counts = {}, {}, {}
@@ -284,6 +292,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"skipped so the comparison stays like-for-like",
                 flush=True,
             )
+            skipped["unscorable"].append(path.name)
             continue
 
         comparison = Comparison(
@@ -309,23 +318,34 @@ def main(argv: list[str] | None = None) -> int:
         print("nothing scored", file=sys.stderr)
         return 1
 
-    report(comparisons, list(detectors))
+    report(comparisons, list(detectors), skipped, len(paths), args.max_points)
 
     if args.report_json:
         args.report_json.parent.mkdir(parents=True, exist_ok=True)
         args.report_json.write_text(
             json.dumps(
-                [
-                    {
-                        "series": c.series,
-                        "points": c.points,
-                        "features": c.features,
-                        "anomaly_rate": c.anomaly_rate,
-                        "seconds": c.seconds,
-                        "results": {k: asdict(v) for k, v in c.results.items()},
-                    }
-                    for c in comparisons
-                ],
+                {
+                    "config": {
+                        "series_attempted": len(paths),
+                        "series_scored": len(comparisons),
+                        "window_points": args.window,
+                        "slide_points": args.slide,
+                        "max_points": args.max_points,
+                        "max_features": args.max_features,
+                    },
+                    "skipped": skipped,
+                    "series": [
+                        {
+                            "series": c.series,
+                            "points": c.points,
+                            "features": c.features,
+                            "anomaly_rate": c.anomaly_rate,
+                            "seconds": c.seconds,
+                            "results": {k: asdict(v) for k, v in c.results.items()},
+                        }
+                        for c in comparisons
+                    ],
+                },
                 indent=2,
             ),
             encoding="utf-8",
@@ -334,8 +354,29 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def report(comparisons: list[Comparison], names: list[str]) -> None:
+def report(
+    comparisons: list[Comparison],
+    names: list[str],
+    skipped: dict[str, list[str]] | None = None,
+    attempted: int = 0,
+    max_points: int = 0,
+) -> None:
     print(f"\n{'=' * 92}\nAGGREGATE over {len(comparisons)} series\n{'=' * 92}", flush=True)
+    if skipped and attempted:
+        dropped = sum(len(v) for v in skipped.values())
+        detail = ", ".join(f"{k}={len(v)}" for k, v in skipped.items() if v)
+        print(
+            f"scored {len(comparisons)} of {attempted} series; {dropped} dropped"
+            + (f" ({detail})" if detail else ""),
+            flush=True,
+        )
+        if skipped["no_labels_in_window"] and max_points:
+            print(
+                f"  the {len(skipped['no_labels_in_window'])} with no labels in window are an "
+                f"artefact of --max-points {max_points:,}: their labelled anomalies begin past "
+                f"the cut, so the scored corpus is biased toward early-onset anomalies.",
+                flush=True,
+            )
     print(f"{'detector':<22} {'AUC-PR':>16} {'F1 @ budget':>16} {'precision':>12} {'recall':>10}")
     for name in names:
         rows = [c.results[name] for c in comparisons if name in c.results]
