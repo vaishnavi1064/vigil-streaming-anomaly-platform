@@ -241,9 +241,20 @@ def run_scenario(fault: Fault, args: argparse.Namespace) -> ChaosResult:
     notes: list[str] = []
 
     print(f"\n{'=' * 78}\n{fault.name}: {fault.description}\n{'=' * 78}", flush=True)
-    reset_topic(bootstrap, topic)
+    # The Flink scenario cannot reset the topic or own the producer: its job is already
+    # subscribed and checkpointing, and deleting the topic under a running job tests topic
+    # deletion rather than checkpoint recovery. Both are therefore optional, and a run that
+    # opts out records that in its notes rather than looking like the others.
+    if args.reset:
+        reset_topic(bootstrap, topic)
+    else:
+        notes.append("topic not reset: ran against a stream already in flight")
 
-    load = start_loadgen(args.rate, args.duration, args.channels, seed=stamp)
+    load = None
+    if args.loadgen:
+        load = start_loadgen(args.rate, args.duration, args.channels, seed=stamp)
+    else:
+        notes.append("producer not started by this run: the workload was driven externally")
     detector = None
     detector_group = f"vigil-chaos-{stamp}"
     if args.with_detector:
@@ -313,12 +324,13 @@ def run_scenario(fault: Fault, args: argparse.Namespace) -> ChaosResult:
             log.error("heal failed: %s", exc)
 
         out = ""
-        try:
-            out, _ = load.communicate(timeout=args.duration + 120)
-        except subprocess.TimeoutExpired:
-            load.kill()
-            out, _ = load.communicate()
-            notes.append("load generator had to be killed")
+        if load is not None:
+            try:
+                out, _ = load.communicate(timeout=args.duration + 120)
+            except subprocess.TimeoutExpired:
+                load.kill()
+                out, _ = load.communicate()
+                notes.append("load generator had to be killed")
 
         for proc in (detector, getattr(fault, "_restarted", None)):
             if proc is not None and proc.poll() is None:
@@ -440,6 +452,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--budget-s", type=float, default=60, help="recovery budget; NFR-7 sets this at 60s"
     )
     p.add_argument("--with-detector", action="store_true", help="also run the detector")
+    p.add_argument(
+        "--no-reset",
+        dest="reset",
+        action="store_false",
+        help="do not delete and recreate the readings topic first. Required for the Flink "
+        "scenario: its job is already subscribed, and deleting the topic underneath it "
+        "would test topic deletion rather than checkpoint recovery",
+    )
+    p.add_argument(
+        "--no-loadgen",
+        dest="loadgen",
+        action="store_false",
+        help="do not start a producer; assume one is already running",
+    )
     p.add_argument("--network", default="vigil_default")
     p.add_argument(
         "--include-flink",
