@@ -155,6 +155,32 @@ move outward.
 independently, which is what makes their disagreement visible instead of one silently
 overwriting the other.
 
+### The duplicate processing this absorbs is measured, not hypothetical
+
+The scaling sweep (`docs/SCALE.md`) drained the same 3,928,127-record backlog at six
+different consumer counts. One consumer read exactly 3,928,127 records. Every multi-consumer
+run read **more**:
+
+| Consumers | Records read against 3,928,127 produced |
+|---|---|
+| 1 | exactly 3,928,127 |
+| 2 | +2,100 |
+| 3 | +1,460 |
+| 4 | +809 |
+| 6 | +702 |
+| 8 | +303 |
+
+A group with one member never rebalances. Add members and the group rebalances mid-drain;
+records fetched but not yet committed are re-delivered to the partition's new owner and
+processed a second time. That is Kafka's consumer contract behaving exactly as specified,
+and it is the clearest statement available of why this path is **at-least-once** and why the
+exactly-once claim below belongs to the Flink job's two-phase commit rather than to the
+Python detector. The idempotent sink is what keeps duplicate *processing* from becoming
+duplicate *episodes*, and the sweep is a direct test of it: six drains of the same backlog
+wrote into the same schema and left **54 episodes with zero duplicate
+`(channel, t_start_ms, raised_by)` groups**. Without the constraint those six replays would
+have produced drift attributable to nothing but our own bookkeeping.
+
 ---
 
 ## 5. What is verified, and how
@@ -167,6 +193,7 @@ overwriting the other.
 | Attribution cannot dangle | foreign key to `context_events`, asserted by test | pass |
 | Raw readings never reach Postgres | test asserts the schema contains exactly the four intended tables | pass |
 | Produced count equals consumed count | Phase 1 gate run | 252,000 = 252,000 |
+| Duplicate delivery on rebalance | scaling sweep: six drains of one backlog, all writing the same schema | up to +2,100 records re-read per drain; **54 episodes, 0 duplicate identity groups** |
 
 None of the above is the zero-drift claim. The gate run is a single-consumer, single-run
 observation over seven minutes. **Zero drift over a multi-hour run requires the Phase 2
