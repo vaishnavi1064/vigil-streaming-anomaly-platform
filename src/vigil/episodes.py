@@ -49,6 +49,11 @@ class ScoreSample:
     window_end_ms: int
     score: float
     latency_ms: float
+    # The detector's own working -- which term drove the score, what the reference was.
+    # Carried so the agent's diagnoser can characterise an episode from evidence rather than
+    # re-deriving it from raw values it cannot see. Not persisted: it is per-window detail
+    # for in-process reasoning, and storing it would put detector internals in the schema.
+    detail: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -131,6 +136,7 @@ class EpisodeBuilder:
             window_end_ms=score.window_end_ms,
             score=score.score,
             latency_ms=score.latency_ms,
+            detail=dict(score.detail),
         )
         origins = tuple(o for o in injected_origins if o is not None)
 
