@@ -211,7 +211,9 @@ def test_the_origin_of_a_scheduled_episode_reaches_the_sample():
     assert artifact is not None
     sim = ChannelSimulator(SPEC, seed=1, anomalies_per_hour=0.0, scheduled=[artifact])
     origins = {
-        s.origin for s in (sim.sample(t) for t in _grid(0.0, artifact.end_s + 5.0, 0.25)) if s.origin
+        s.origin
+        for s in (sim.sample(t) for t in _grid(0.0, artifact.end_s + 5.0, 0.25))
+        if s.origin
     }
     assert origins == {AnomalyOrigin.DEPLOY}
 
