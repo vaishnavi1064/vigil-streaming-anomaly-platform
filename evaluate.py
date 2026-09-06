@@ -8,10 +8,16 @@ The protocol from ADR-016, run end to end:
   3. **Shadow pass**: the detector with conditioning off. This is the unconditioned
      baseline, and it reads exactly the same records the conditioned pass will.
   4. **Conditioned pass**: same records, same seed, conditioning on.
-  5. **Fail-open pass**: conditioning on, pointed at a context topic that is empty. ADR-007
-     says a missing signal must never suppress, so this pass has to reproduce the shadow
-     pass episode for episode. Anything else means an outage in the context path is being
-     read as "nothing was deployed".
+  5. **Fail-open pass**: conditioning on, pointed at a context topic that exists and is
+     empty. ADR-007 says a missing signal must never suppress, so this pass has to reproduce
+     the shadow pass episode for episode. Anything else means silence on the context path is
+     being read as permission to mute.
+
+     Precisely which half of ADR-007 this covers: the source here is *available and silent*,
+     which the policy answers with `no_context`. The other half -- a source that cannot be
+     reached at all, answered with `fail_open` -- is covered by unit tests in
+     `tests/test_conditioning.py`, because taking the broker away mid-run would also take
+     the readings away and there would be nothing left to condition.
   6. Score the passes against the plan and report the pair.
 
 The two passes write to separate Postgres schemas so neither can see or overwrite the

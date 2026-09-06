@@ -355,10 +355,14 @@ class FailOpenCheck:
     """Did conditioning stay out of the way when it had no signal to condition on?
 
     ADR-007 makes this a correctness property rather than a preference: a policy that
-    suppresses while its context source is down has turned an outage in the signal path into
-    silence in the alerting path, which is the failure mode conditioning is most likely to
-    introduce and the hardest to notice. So the fail-open pass has to reproduce the
-    unconditioned baseline exactly -- not approximately, and not "close enough".
+    suppresses while its context source says nothing has turned silence in the signal path
+    into silence in the alerting path, which is the failure mode conditioning is most likely
+    to introduce and the hardest to notice. So the pass has to reproduce the unconditioned
+    baseline exactly -- not approximately, and not "close enough".
+
+    The pass this scores runs against a context topic that exists and is empty, so the
+    source is available and silent. A source that cannot be reached at all is the other half
+    of ADR-007 and is covered by unit tests on the policy.
     """
 
     shadow_episodes: int
