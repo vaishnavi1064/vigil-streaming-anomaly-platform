@@ -1,0 +1,57 @@
+{
+  "run": "f12530af",
+  "plan": "docs\\results\\paired-plan-f12530af.json",
+  "config": {
+    "duration_s": 900.0,
+    "rate": 400.0,
+    "channels": 12,
+    "seed": 20260906,
+    "threshold": 8.0,
+    "min_corroborating_channels": 2,
+    "min_scope_fraction": 0.25
+  },
+  "ground_truth": {
+    "faults": 30,
+    "faults_inside_windows": 0,
+    "faults_outside_windows": 30,
+    "faults_inside_quiet_windows": 0,
+    "artifacts": 56,
+    "windows": 14
+  },
+  "shadow": {
+    "label": "shadow",
+    "episodes": 81,
+    "paged": 81,
+    "attributed": 0,
+    "faults_total": 30,
+    "faults_detected": 25,
+    "faults_inside_total": 0,
+    "faults_inside_detected": 0,
+    "faults_outside_total": 30,
+    "faults_outside_detected": 25,
+    "faults_quiet_window_total": 0,
+    "faults_quiet_window_detected": 0,
+    "artifact_pages": 45,
+    "unexplained_pages": 23
+  },
+  "conditioned": {
+    "label": "conditioned",
+    "episodes": 10,
+    "paged": 10,
+    "attributed": 0,
+    "faults_total": 30,
+    "faults_detected": 4,
+    "faults_inside_total": 0,
+    "faults_inside_detected": 0,
+    "faults_outside_total": 30,
+    "faults_outside_detected": 4,
+    "faults_quiet_window_total": 0,
+    "faults_quiet_window_detected": 0,
+    "artifact_pages": 0,
+    "unexplained_pages": 7
+  },
+  "fp_reduction": 0.8970588235294118,
+  "recall_loss": 0.7000000000000001,
+  "recall_loss_inside": 0.0,
+  "meets_target": false
+}

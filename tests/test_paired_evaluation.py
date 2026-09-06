@@ -301,3 +301,52 @@ def test_no_false_pages_in_the_baseline_reports_zero_reduction_not_a_division_er
     truth = GroundTruth(faults=[fault("a")])
     comparison = build_comparison([paged("a")], [paged("a")], truth)
     assert comparison.fp_reduction == 0.0
+
+
+def test_a_plan_written_by_loadgen_puts_faults_and_windows_on_the_same_clock(tmp_path):
+    """The regression guard for a bug that silently deleted an entire test population.
+
+    `_write_plan` anchored fault times to wall clock but wrote deploy windows
+    stream-relative. The two never overlapped, so `faults_inside_windows` read zero even
+    though the scenario had scheduled thirteen -- and the population that exists to catch
+    blanket suppression was invisible to the scorer while the run still reported a
+    confident-looking number.
+    """
+    import loadgen
+
+    from vigil.ingest.synthetic_source import SyntheticFleetSource
+
+    source = SyntheticFleetSource(
+        channels=8, rate_per_s=1000, duration_s=1800, scenario=True, seed=99
+    )
+    source._t0_wall_ms = 1_788_000_000_000  # as readings() would set it
+    plan_path = tmp_path / "plan.json"
+    loadgen._write_plan(plan_path, source)
+
+    scheduled_inside = len(source.plan.faults_inside_deploy_windows())
+    loaded = GroundTruth.from_plan(plan_path)
+
+    assert scheduled_inside > 0, "the scenario must schedule faults inside windows to test this"
+    assert len(loaded.faults_inside_windows()) == scheduled_inside
+
+    # Both populations must sit on the wall clock, not one on each.
+    anchor = source._t0_wall_ms
+    assert all(w.t_start_ms >= anchor for w in loaded.windows)
+    assert all(f.t_start_ms >= anchor for f in loaded.faults)
+
+
+def test_a_plan_with_quiet_windows_round_trips_that_flag(tmp_path):
+    import loadgen
+
+    from vigil.ingest.synthetic_source import SyntheticFleetSource
+
+    source = SyntheticFleetSource(
+        channels=8, rate_per_s=1000, duration_s=1800, scenario=True, seed=99
+    )
+    source._t0_wall_ms = 1_788_000_000_000
+    plan_path = tmp_path / "plan.json"
+    loadgen._write_plan(plan_path, source)
+
+    loaded = GroundTruth.from_plan(plan_path)
+    assert any(not w.perturbed for w in loaded.windows), "quiet windows must survive the plan"
+    assert any(w.perturbed for w in loaded.windows)

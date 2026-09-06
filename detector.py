@@ -173,6 +173,13 @@ class DetectionSpine:
             # depend on the order episodes happened to close in.
             self.conditioning.index.record(episode.channel, episode.t_start_ms, episode.t_end_ms)
             attribution = self.conditioning.apply(episode)
+            if attribution.event is not None:
+                # The episode's attributed_to is a foreign key into context_events, so the
+                # event has to exist before the episode that points at it. Writing the
+                # episode first raises ForeignKeyViolation -- which is the constraint doing
+                # its job, and is how this was found.
+                with self._store_lock:
+                    self.store.record_context_event(attribution.event)
             if episode.status is not EpisodeStatus.REAL:
                 self.attributed += 1
             log.info(

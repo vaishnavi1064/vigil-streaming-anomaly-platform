@@ -113,6 +113,17 @@ def run(args: argparse.Namespace) -> int:
     return 1 if publisher.counters.failed else 0
 
 
+def _anchor_event(event, anchor_ms: int):
+    """Shift a stream-relative context event onto the run's wall clock."""
+    from dataclasses import replace
+
+    return replace(
+        event,
+        t_start_ms=anchor_ms + event.t_start_ms,
+        t_end_ms=anchor_ms + event.t_end_ms,
+    )
+
+
 def _write_plan(path: Path, source: SyntheticFleetSource) -> None:
     """Persist the ground truth so the evaluation harness scores against the plan.
 
@@ -129,7 +140,12 @@ def _write_plan(path: Path, source: SyntheticFleetSource) -> None:
         "channels": list(plan.channels),
         "deploys": [
             {
-                "event": json.loads(d.event.to_json()),
+                # Anchor the marker to wall clock exactly as the published marker is. The
+                # plan previously wrote deploy windows stream-relative while writing faults
+                # anchored, so the two never overlapped and the evaluation read zero faults
+                # inside context windows -- silently deleting the population that exists to
+                # catch blanket suppression.
+                "event": json.loads(_anchor_event(d.event, anchor).to_json()),
                 "artifacts": {
                     channel: [
                         {

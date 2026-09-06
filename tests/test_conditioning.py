@@ -375,3 +375,20 @@ def test_corroboration_scales_with_how_many_siblings_moved(channels):
     assert decision.corroborating_channels == channels
     expected = EpisodeStatus.ATTRIBUTED if channels >= 2 else EpisodeStatus.REAL
     assert decision.status is expected
+
+
+def test_an_attribution_carries_the_event_not_just_its_id():
+    # An episode's attributed_to is a foreign key into context_events, so whoever persists
+    # the episode must be able to persist the event it points at. Returning only the id left
+    # the caller holding a reference it could not satisfy, and the database refused the
+    # write -- which is how this was found.
+    policy = policy_with([deploy(scope=FLEET[:4])], flagged=FLEET[:4])
+    decision = policy.decide(episode(FLEET[0]))
+    assert decision.attributed_to == "deploy-0001"
+    assert decision.event is not None
+    assert decision.event.event_id == "deploy-0001"
+
+
+def test_a_raised_episode_carries_no_event_to_persist():
+    policy = policy_with([])
+    assert policy.decide(episode(FLEET[0])).event is None

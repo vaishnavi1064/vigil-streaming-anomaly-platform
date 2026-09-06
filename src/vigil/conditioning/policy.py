@@ -67,6 +67,11 @@ class Attribution:
     reason: str
     corroborating_channels: int = 0
     scope_size: int = 0
+    # The event itself, not just its id. An episode's `attributed_to` is a foreign key into
+    # context_events, so whoever persists the episode has to be able to persist the event it
+    # points at -- returning only the id left the caller with a reference it could not
+    # satisfy, and the database correctly refused the write.
+    event: ContextEvent | None = None
 
     @property
     def paged(self) -> bool:
@@ -293,6 +298,7 @@ class ConditioningPolicy:
             reason=reason,
             corroborating_channels=corroborating,
             scope_size=scope_size,
+            event=event,
         )
 
     def _record(self, attribution: Attribution) -> Attribution:
