@@ -4,17 +4,55 @@
 > blocker protocol. Each entry states what was assumed, so the assumption can be overturned
 > cheaply. "None" is a valid state for this file.
 
-## Open — needs a human
+## Open -- needs a human
 
-_None open._ Both previously-open questions were answered on 2026-09-06 and are recorded
-below.
+### B-3. The tool-calling fine-tune would be distilling a five-way lookup. Is it still worth the rented GPU?
+
+**What was measured.** The training set is built and curated (1,200 examples, all four
+populations, every target gate-approved and licence-checked). Counting distinct target
+sequences over those 1,200 examples gives **five**:
+
+| Target | Rows | Produced when |
+|---|---|---|
+| describe, fetch_recent, silence_channel, raise_ticket | 351 | variance burst |
+| describe, fetch_recent, request_recalibration, raise_ticket | 307 | level shift |
+| describe, fetch_recent, annotate_episode | 309 | isolated spike |
+| describe_channel, escalate_to_human | 118 | safety channel |
+| escalate_to_human | 115 | abstention, and safety where escalate is the only licence |
+
+The target is a deterministic function of the diagnosed symptom, and the symptom is computed
+by `Diagnoser` **before** the prompt is rendered -- it is in the prompt. So a model trained
+on this set is learning a five-way classification whose answer is already an input. It can
+approach the deterministic planner and cannot beat it. B-2 was answered before this was
+measured.
+
+**Options.**
+
+1. **Drop the fine-tune; publish the measurement as the finding.** Keep the dataset builder,
+   the schema and the curation as evidence the work was done properly, and spend the time on
+   the agent eval (Ragas/DeepEval/TruLens) and the CI quality gate that Phase 5 also asks
+   for. Costs the "QLoRA" line; gains a defensible answer to "why didn't you fine-tune".
+2. **Make the task genuinely harder, then fine-tune.** Remove the diagnosis summary and
+   symptom from the prompt so the model must infer the symptom from the score evidence and
+   select actions from the retrieved licences. Still distillation, but the answer is no
+   longer handed to the model in its own prompt. Costs a rewrite of the prompt renderer and
+   a re-measure; the deterministic planner remains the baseline.
+3. **Fine-tune as planned and report it as distillation.** Cheapest in effort, and the
+   honest write-up would have to say the model cannot exceed the rules on this task.
+
+**Recommendation: 1, or 2 if the fine-tune matters for the portfolio.** Not chosen
+autonomously because it trades an interview talking point against effort, which is the
+architect's call, and because it spends money on hardware.
+
+**Not blocking anything.** The deterministic planner is in place and the agent loop is
+complete; work continues elsewhere.
 
 ## Decided by the architect
 
 | # | Question | Decision | Consequence |
 |---|---|---|---|
 | B-1 | How should the VLM explainer be served, given 4 GB of VRAM and no API key? | **Hosted endpoint behind env vars** (`VLM_ENDPOINT`, `VLM_API_KEY`, `VLM_MODEL`). | The explainer is built in full against that interface. With no key set it reports itself unavailable and detection is unaffected -- the documented degradation, not a stub pretending to work. Explanations appear the moment a key is supplied, and NFR-2's 5 s budget is measured against the real endpoint rather than assumed. Cost accepted: a per-flagged-window API cost and a third-party dependency on the rare path only. |
-| B-2 | Is the QLoRA fine-tune worth attempting on this hardware? | **A GPU will be rented**, so the fine-tune proceeds as the plan specifies. | The dataset builder and training script are written now so the rented time is spent training rather than authoring. Until the GPU is available the agent runs the deterministic planner, which stays as the baseline the fine-tuned model is measured against rather than merely replaced by. |
+| B-2 | Is the QLoRA fine-tune worth attempting on this hardware? | **A GPU will be rented**, so the fine-tune proceeds as the plan specifies. **Reopened as B-3** now that the dataset is built and its target entropy measured. | The dataset builder and training script are written now so the rented time is spent training rather than authoring. Until the GPU is available the agent runs the deterministic planner, which stays as the baseline the fine-tuned model is measured against rather than merely replaced by. |
 
 ## Defaulted (proceeding under a recorded assumption)
 
