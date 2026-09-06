@@ -211,6 +211,8 @@ def main(argv: list[str] | None = None) -> int:
             str(args.min_corroborating_channels),
             "--min-scope-fraction",
             str(args.min_scope_fraction),
+            "--synchrony-ms",
+            str(args.synchrony_ms),
         ],
         env={"PGOPTIONS": f"-c search_path={conditioned_schema}"},
         timeout=1800,
