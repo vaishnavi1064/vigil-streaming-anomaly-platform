@@ -1,0 +1,1050 @@
+{
+  "seed": "synthetic-fleet:12ch",
+  "t0_wall_ms": 1788727867168,
+  "duration_s": 900.0,
+  "channels": [
+    "pump-00.vibration_mm_s",
+    "pump-00.bearing_temp_c",
+    "pump-00.discharge_pressure_bar",
+    "pump-00.flow_m3_h",
+    "pump-01.vibration_mm_s",
+    "pump-01.bearing_temp_c",
+    "pump-01.discharge_pressure_bar",
+    "pump-01.flow_m3_h",
+    "pump-02.vibration_mm_s",
+    "pump-02.bearing_temp_c",
+    "pump-02.discharge_pressure_bar",
+    "pump-02.flow_m3_h"
+  ],
+  "deploys": [
+    {
+      "event": {
+        "event_id": "deploy-0001",
+        "kind": "deploy",
+        "t_start_ms": 1788727998625,
+        "t_end_ms": 1788728095367,
+        "severity": "warning",
+        "detail": "rollout of inverter-telemetry-collector v1.5.3 to the california fleet",
+        "scope": [
+          "pump-00.vibration_mm_s",
+          "pump-02.bearing_temp_c"
+        ],
+        "perturbed_telemetry": true
+      },
+      "artifacts": {
+        "pump-00.vibration_mm_s": [
+          {
+            "kind": "level_shift",
+            "origin": "deploy",
+            "t_start_ms": 1788728021889,
+            "t_end_ms": 1788728090291,
+            "magnitude_sigma": -3.739375317218083
+          }
+        ],
+        "pump-02.bearing_temp_c": [
+          {
+            "kind": "spike",
+            "origin": "deploy",
+            "t_start_ms": 1788728008544,
+            "t_end_ms": 1788728008544,
+            "magnitude_sigma": -4.849217256166889
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "event_id": "deploy-0002",
+        "kind": "deploy",
+        "t_start_ms": 1788728030388,
+        "t_end_ms": 1788728135706,
+        "severity": "info",
+        "detail": "restart of the site-rollup aggregator after v1.5.8 deploy",
+        "scope": [
+          "pump-01.bearing_temp_c",
+          "pump-01.flow_m3_h"
+        ],
+        "perturbed_telemetry": false
+      },
+      "artifacts": {}
+    },
+    {
+      "event": {
+        "event_id": "deploy-0003",
+        "kind": "deploy",
+        "t_start_ms": 1788728064865,
+        "t_end_ms": 1788728166426,
+        "severity": "info",
+        "detail": "rollout of inverter-telemetry-collector v1.37.8 to the nevada fleet",
+        "scope": [
+          "pump-00.flow_m3_h",
+          "pump-00.vibration_mm_s",
+          "pump-02.flow_m3_h",
+          "pump-02.vibration_mm_s"
+        ],
+        "perturbed_telemetry": false
+      },
+      "artifacts": {}
+    },
+    {
+      "event": {
+        "event_id": "deploy-0004",
+        "kind": "deploy",
+        "t_start_ms": 1788728103413,
+        "t_end_ms": 1788728264998,
+        "severity": "warning",
+        "detail": "canary of string-normaliser v1.18.5 on the arizona fleet",
+        "scope": [
+          "pump-00.bearing_temp_c",
+          "pump-00.discharge_pressure_bar",
+          "pump-00.flow_m3_h",
+          "pump-00.vibration_mm_s",
+          "pump-01.bearing_temp_c",
+          "pump-01.discharge_pressure_bar",
+          "pump-01.flow_m3_h",
+          "pump-01.vibration_mm_s",
+          "pump-02.bearing_temp_c",
+          "pump-02.discharge_pressure_bar",
+          "pump-02.flow_m3_h",
+          "pump-02.vibration_mm_s"
+        ],
+        "perturbed_telemetry": true
+      },
+      "artifacts": {
+        "pump-00.bearing_temp_c": [
+          {
+            "kind": "spike",
+            "origin": "deploy",
+            "t_start_ms": 1788728150013,
+            "t_end_ms": 1788728150013,
+            "magnitude_sigma": -4.002935168428512
+          }
+        ],
+        "pump-00.discharge_pressure_bar": [
+          {
+            "kind": "spike",
+            "origin": "deploy",
+            "t_start_ms": 1788728132806,
+            "t_end_ms": 1788728132806,
+            "magnitude_sigma": 3.9703908204382374
+          }
+        ],
+        "pump-00.flow_m3_h": [
+          {
+            "kind": "variance_burst",
+            "origin": "deploy",
+            "t_start_ms": 1788728110703,
+            "t_end_ms": 1788728134995,
+            "magnitude_sigma": 6.907542138414593
+          }
+        ],
+        "pump-00.vibration_mm_s": [
+          {
+            "kind": "variance_burst",
+            "origin": "deploy",
+            "t_start_ms": 1788728117933,
+            "t_end_ms": 1788728177654,
+            "magnitude_sigma": -6.605496429198703
+          }
+        ],
+        "pump-01.bearing_temp_c": [
+          {
+            "kind": "spike",
+            "origin": "deploy",
+            "t_start_ms": 1788728113224,
+            "t_end_ms": 1788728113224,
+            "magnitude_sigma": 6.3051813839570645
+          }
+        ],
+        "pump-01.discharge_pressure_bar": [
+          {
+            "kind": "variance_burst",
+            "origin": "deploy",
+            "t_start_ms": 1788728107135,
+            "t_end_ms": 1788728132119,
+            "magnitude_sigma": -6.488743627847029
+          }
+        ],
+        "pump-01.flow_m3_h": [
+          {
+            "kind": "level_shift",
+            "origin": "deploy",
+            "t_start_ms": 1788728158881,
+            "t_end_ms": 1788728208369,
+            "magnitude_sigma": -5.737055472611767
+          }
+        ],
+        "pump-01.vibration_mm_s": [
+          {
+            "kind": "variance_burst",
+            "origin": "deploy",
+            "t_start_ms": 1788728114471,
+            "t_end_ms": 1788728149195,
+            "magnitude_sigma": -7.582055525657088
+          }
+        ],
+        "pump-02.bearing_temp_c": [
+          {
+            "kind": "level_shift",
+            "origin": "deploy",
+            "t_start_ms": 1788728164328,
+            "t_end_ms": 1788728203819,
+            "magnitude_sigma": 7.731127994393122
+          }
+        ],
+        "pump-02.discharge_pressure_bar": [
+          {
+            "kind": "spike",
+            "origin": "deploy",
+            "t_start_ms": 1788728118131,
+            "t_end_ms": 1788728118131,
+            "magnitude_sigma": -7.424888184429115
+          }
+        ],
+        "pump-02.flow_m3_h": [
+          {
+            "kind": "spike",
+            "origin": "deploy",
+            "t_start_ms": 1788728106657,
+            "t_end_ms": 1788728106657,
+            "magnitude_sigma": -7.979109740459238
+          }
+        ],
+        "pump-02.vibration_mm_s": [
+          {
+            "kind": "variance_burst",
+            "origin": "deploy",
+            "t_start_ms": 1788728144901,
+            "t_end_ms": 1788728187250,
+            "magnitude_sigma": -3.5260026078194717
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "event_id": "deploy-0005",
+        "kind": "deploy",
+        "t_start_ms": 1788728129162,
+        "t_end_ms": 1788728294842,
+        "severity": "info",
+        "detail": "config change: scrape interval lowered on the arizona fleet (v1.22.3)",
+        "scope": [
+          "pump-00.bearing_temp_c",
+          "pump-00.flow_m3_h",
+          "pump-00.vibration_mm_s",
+          "pump-01.discharge_pressure_bar",
+          "pump-01.vibration_mm_s",
+          "pump-02.bearing_temp_c"
+        ],
+        "perturbed_telemetry": false
+      },
+      "artifacts": {}
+    },
+    {
+      "event": {
+        "event_id": "deploy-0006",
+        "kind": "deploy",
+        "t_start_ms": 1788728148922,
+        "t_end_ms": 1788728258666,
+        "severity": "warning",
+        "detail": "canary of string-normaliser v1.38.4 on the nevada fleet",
+        "scope": [
+          "pump-00.bearing_temp_c",
+          "pump-00.vibration_mm_s",
+          "pump-01.flow_m3_h",
+          "pump-01.vibration_mm_s",
+          "pump-02.bearing_temp_c",
+          "pump-02.discharge_pressure_bar"
+        ],
+        "perturbed_telemetry": true
+      },
+      "artifacts": {
+        "pump-00.bearing_temp_c": [
+          {
+            "kind": "variance_burst",
+            "origin": "deploy",
+            "t_start_ms": 1788728182577,
+            "t_end_ms": 1788728200520,
+            "magnitude_sigma": 3.6722893663574983
+          }
+        ],
+        "pump-00.vibration_mm_s": [
+          {
+            "kind": "variance_burst",
+            "origin": "deploy",
+            "t_start_ms": 1788728185541,
+            "t_end_ms": 1788728221485,
+            "magnitude_sigma": 4.588487811590564
+          }
+        ],
+        "pump-01.flow_m3_h": [
+          {
+            "kind": "variance_burst",
+            "origin": "deploy",
+            "t_start_ms": 1788728174538,
+            "t_end_ms": 1788728214003,
+            "magnitude_sigma": 7.682823379409034
+          }
+        ],
+        "pump-01.vibration_mm_s": [
+          {
+            "kind": "spike",
+            "origin": "deploy",
+            "t_start_ms": 1788728189787,
+            "t_end_ms": 1788728189787,
+            "magnitude_sigma": 4.405401773170027
+          }
+        ],
+        "pump-02.bearing_temp_c": [
+          {
+            "kind": "variance_burst",
+            "origin": "deploy",
+            "t_start_ms": 1788728156760,
+            "t_end_ms": 1788728181139,
+            "magnitude_sigma": 7.992566497012259
+          }
+        ],
+        "pump-02.discharge_pressure_bar": [
+          {
+            "kind": "level_shift",
+            "origin": "deploy",
+            "t_start_ms": 1788728186088,
+            "t_end_ms": 1788728226845,
+            "magnitude_sigma": -6.127443251390134
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "event_id": "deploy-0007",
+        "kind": "deploy",
+        "t_start_ms": 1788728223114,
+        "t_end_ms": 1788728303641,
+        "severity": "warning",
+        "detail": "rollout of inverter-telemetry-collector v1.3.7 to the california fleet",
+        "scope": [
+          "pump-00.bearing_temp_c",
+          "pump-01.discharge_pressure_bar",
+          "pump-01.vibration_mm_s",
+          "pump-02.discharge_pressure_bar"
+        ],
+        "perturbed_telemetry": true
+      },
+      "artifacts": {
+        "pump-00.bearing_temp_c": [
+          {
+            "kind": "variance_burst",
+            "origin": "deploy",
+            "t_start_ms": 1788728227471,
+            "t_end_ms": 1788728253711,
+            "magnitude_sigma": 4.060855265605471
+          }
+        ],
+        "pump-01.discharge_pressure_bar": [
+          {
+            "kind": "spike",
+            "origin": "deploy",
+            "t_start_ms": 1788728224238,
+            "t_end_ms": 1788728224238,
+            "magnitude_sigma": 7.539378707656302
+          }
+        ],
+        "pump-01.vibration_mm_s": [
+          {
+            "kind": "variance_burst",
+            "origin": "deploy",
+            "t_start_ms": 1788728238936,
+            "t_end_ms": 1788728262658,
+            "magnitude_sigma": 6.7598537864743005
+          }
+        ],
+        "pump-02.discharge_pressure_bar": [
+          {
+            "kind": "level_shift",
+            "origin": "deploy",
+            "t_start_ms": 1788728240605,
+            "t_end_ms": 1788728275971,
+            "magnitude_sigma": -7.280240138362101
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "event_id": "deploy-0008",
+        "kind": "deploy",
+        "t_start_ms": 1788728381989,
+        "t_end_ms": 1788728528445,
+        "severity": "warning",
+        "detail": "canary of string-normaliser v1.39.1 on the california fleet",
+        "scope": [
+          "pump-00.vibration_mm_s",
+          "pump-01.discharge_pressure_bar"
+        ],
+        "perturbed_telemetry": true
+      },
+      "artifacts": {
+        "pump-00.vibration_mm_s": [
+          {
+            "kind": "variance_burst",
+            "origin": "deploy",
+            "t_start_ms": 1788728419625,
+            "t_end_ms": 1788728477740,
+            "magnitude_sigma": -7.141589129228418
+          }
+        ],
+        "pump-01.discharge_pressure_bar": [
+          {
+            "kind": "spike",
+            "origin": "deploy",
+            "t_start_ms": 1788728410473,
+            "t_end_ms": 1788728410473,
+            "magnitude_sigma": -6.413942039441235
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "event_id": "deploy-0009",
+        "kind": "deploy",
+        "t_start_ms": 1788728426599,
+        "t_end_ms": 1788728547885,
+        "severity": "info",
+        "detail": "canary of string-normaliser v1.14.1 on the nevada fleet",
+        "scope": [
+          "pump-00.discharge_pressure_bar",
+          "pump-00.vibration_mm_s",
+          "pump-01.bearing_temp_c",
+          "pump-02.discharge_pressure_bar"
+        ],
+        "perturbed_telemetry": false
+      },
+      "artifacts": {}
+    },
+    {
+      "event": {
+        "event_id": "deploy-0010",
+        "kind": "deploy",
+        "t_start_ms": 1788728445743,
+        "t_end_ms": 1788728552695,
+        "severity": "warning",
+        "detail": "restart of the site-rollup aggregator after v1.12.7 deploy",
+        "scope": [
+          "pump-00.bearing_temp_c",
+          "pump-00.discharge_pressure_bar",
+          "pump-00.flow_m3_h",
+          "pump-00.vibration_mm_s",
+          "pump-01.bearing_temp_c",
+          "pump-01.discharge_pressure_bar",
+          "pump-01.flow_m3_h",
+          "pump-01.vibration_mm_s",
+          "pump-02.bearing_temp_c",
+          "pump-02.discharge_pressure_bar",
+          "pump-02.flow_m3_h",
+          "pump-02.vibration_mm_s"
+        ],
+        "perturbed_telemetry": true
+      },
+      "artifacts": {
+        "pump-00.bearing_temp_c": [
+          {
+            "kind": "variance_burst",
+            "origin": "deploy",
+            "t_start_ms": 1788728488251,
+            "t_end_ms": 1788728519548,
+            "magnitude_sigma": -6.791147403135312
+          }
+        ],
+        "pump-00.discharge_pressure_bar": [
+          {
+            "kind": "variance_burst",
+            "origin": "deploy",
+            "t_start_ms": 1788728454509,
+            "t_end_ms": 1788728473828,
+            "magnitude_sigma": -7.900074613759532
+          }
+        ],
+        "pump-00.flow_m3_h": [
+          {
+            "kind": "variance_burst",
+            "origin": "deploy",
+            "t_start_ms": 1788728455799,
+            "t_end_ms": 1788728500567,
+            "magnitude_sigma": 5.5305230523427
+          }
+        ],
+        "pump-00.vibration_mm_s": [
+          {
+            "kind": "spike",
+            "origin": "deploy",
+            "t_start_ms": 1788728483876,
+            "t_end_ms": 1788728483876,
+            "magnitude_sigma": 6.758669066295212
+          }
+        ],
+        "pump-01.bearing_temp_c": [
+          {
+            "kind": "spike",
+            "origin": "deploy",
+            "t_start_ms": 1788728486497,
+            "t_end_ms": 1788728486497,
+            "magnitude_sigma": -4.970229772714518
+          }
+        ],
+        "pump-01.discharge_pressure_bar": [
+          {
+            "kind": "spike",
+            "origin": "deploy",
+            "t_start_ms": 1788728478530,
+            "t_end_ms": 1788728478530,
+            "magnitude_sigma": -7.335457622353234
+          }
+        ],
+        "pump-01.flow_m3_h": [
+          {
+            "kind": "variance_burst",
+            "origin": "deploy",
+            "t_start_ms": 1788728485990,
+            "t_end_ms": 1788728526829,
+            "magnitude_sigma": 5.956973191121836
+          }
+        ],
+        "pump-01.vibration_mm_s": [
+          {
+            "kind": "level_shift",
+            "origin": "deploy",
+            "t_start_ms": 1788728467263,
+            "t_end_ms": 1788728499730,
+            "magnitude_sigma": 5.617680106985553
+          }
+        ],
+        "pump-02.bearing_temp_c": [
+          {
+            "kind": "level_shift",
+            "origin": "deploy",
+            "t_start_ms": 1788728447368,
+            "t_end_ms": 1788728472402,
+            "magnitude_sigma": -6.0827362064849115
+          }
+        ],
+        "pump-02.discharge_pressure_bar": [
+          {
+            "kind": "level_shift",
+            "origin": "deploy",
+            "t_start_ms": 1788728484799,
+            "t_end_ms": 1788728540990,
+            "magnitude_sigma": -7.972440525709454
+          }
+        ],
+        "pump-02.flow_m3_h": [
+          {
+            "kind": "level_shift",
+            "origin": "deploy",
+            "t_start_ms": 1788728466723,
+            "t_end_ms": 1788728486391,
+            "magnitude_sigma": -6.538124771831246
+          }
+        ],
+        "pump-02.vibration_mm_s": [
+          {
+            "kind": "variance_burst",
+            "origin": "deploy",
+            "t_start_ms": 1788728479115,
+            "t_end_ms": 1788728499452,
+            "magnitude_sigma": -4.838382413048947
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "event_id": "deploy-0011",
+        "kind": "deploy",
+        "t_start_ms": 1788728627130,
+        "t_end_ms": 1788728733838,
+        "severity": "warning",
+        "detail": "canary of string-normaliser v1.27.9 on the arizona fleet",
+        "scope": [
+          "pump-01.flow_m3_h",
+          "pump-02.vibration_mm_s"
+        ],
+        "perturbed_telemetry": true
+      },
+      "artifacts": {
+        "pump-01.flow_m3_h": [
+          {
+            "kind": "level_shift",
+            "origin": "deploy",
+            "t_start_ms": 1788728649217,
+            "t_end_ms": 1788728694619,
+            "magnitude_sigma": 5.099695216224991
+          }
+        ],
+        "pump-02.vibration_mm_s": [
+          {
+            "kind": "level_shift",
+            "origin": "deploy",
+            "t_start_ms": 1788728657474,
+            "t_end_ms": 1788728691258,
+            "magnitude_sigma": -5.706951897231017
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "event_id": "deploy-0012",
+        "kind": "deploy",
+        "t_start_ms": 1788728658357,
+        "t_end_ms": 1788728752020,
+        "severity": "info",
+        "detail": "canary of string-normaliser v1.20.4 on the california fleet",
+        "scope": [
+          "pump-00.bearing_temp_c",
+          "pump-00.flow_m3_h",
+          "pump-00.vibration_mm_s",
+          "pump-01.bearing_temp_c",
+          "pump-01.discharge_pressure_bar",
+          "pump-02.bearing_temp_c"
+        ],
+        "perturbed_telemetry": false
+      },
+      "artifacts": {}
+    },
+    {
+      "event": {
+        "event_id": "deploy-0013",
+        "kind": "deploy",
+        "t_start_ms": 1788728739138,
+        "t_end_ms": 1788728767168,
+        "severity": "warning",
+        "detail": "restart of the site-rollup aggregator after v1.6.0 deploy",
+        "scope": [
+          "pump-00.bearing_temp_c",
+          "pump-00.discharge_pressure_bar",
+          "pump-00.flow_m3_h",
+          "pump-00.vibration_mm_s",
+          "pump-01.bearing_temp_c",
+          "pump-01.discharge_pressure_bar",
+          "pump-01.flow_m3_h",
+          "pump-01.vibration_mm_s",
+          "pump-02.bearing_temp_c",
+          "pump-02.discharge_pressure_bar",
+          "pump-02.flow_m3_h",
+          "pump-02.vibration_mm_s"
+        ],
+        "perturbed_telemetry": true
+      },
+      "artifacts": {
+        "pump-00.bearing_temp_c": [
+          {
+            "kind": "spike",
+            "origin": "deploy",
+            "t_start_ms": 1788728744055,
+            "t_end_ms": 1788728744055,
+            "magnitude_sigma": 6.555713153125114
+          }
+        ],
+        "pump-00.discharge_pressure_bar": [
+          {
+            "kind": "level_shift",
+            "origin": "deploy",
+            "t_start_ms": 1788728745920,
+            "t_end_ms": 1788728765650,
+            "magnitude_sigma": 3.5626789033443793
+          }
+        ],
+        "pump-00.flow_m3_h": [
+          {
+            "kind": "level_shift",
+            "origin": "deploy",
+            "t_start_ms": 1788728743478,
+            "t_end_ms": 1788728789617,
+            "magnitude_sigma": 5.846995066568949
+          }
+        ],
+        "pump-00.vibration_mm_s": [
+          {
+            "kind": "spike",
+            "origin": "deploy",
+            "t_start_ms": 1788728739782,
+            "t_end_ms": 1788728739782,
+            "magnitude_sigma": 4.115913063370582
+          }
+        ],
+        "pump-01.bearing_temp_c": [
+          {
+            "kind": "spike",
+            "origin": "deploy",
+            "t_start_ms": 1788728741637,
+            "t_end_ms": 1788728741637,
+            "magnitude_sigma": -6.7975340207319235
+          }
+        ],
+        "pump-01.discharge_pressure_bar": [
+          {
+            "kind": "level_shift",
+            "origin": "deploy",
+            "t_start_ms": 1788728749885,
+            "t_end_ms": 1788728771688,
+            "magnitude_sigma": 6.920689669105449
+          }
+        ],
+        "pump-01.flow_m3_h": [
+          {
+            "kind": "spike",
+            "origin": "deploy",
+            "t_start_ms": 1788728748824,
+            "t_end_ms": 1788728748824,
+            "magnitude_sigma": -5.972874592485784
+          }
+        ],
+        "pump-01.vibration_mm_s": [
+          {
+            "kind": "spike",
+            "origin": "deploy",
+            "t_start_ms": 1788728742780,
+            "t_end_ms": 1788728742780,
+            "magnitude_sigma": -4.180151994453
+          }
+        ],
+        "pump-02.bearing_temp_c": [
+          {
+            "kind": "variance_burst",
+            "origin": "deploy",
+            "t_start_ms": 1788728746093,
+            "t_end_ms": 1788728776926,
+            "magnitude_sigma": 5.776363983742119
+          }
+        ],
+        "pump-02.discharge_pressure_bar": [
+          {
+            "kind": "variance_burst",
+            "origin": "deploy",
+            "t_start_ms": 1788728746697,
+            "t_end_ms": 1788728769130,
+            "magnitude_sigma": -5.196276188457542
+          }
+        ],
+        "pump-02.flow_m3_h": [
+          {
+            "kind": "spike",
+            "origin": "deploy",
+            "t_start_ms": 1788728740074,
+            "t_end_ms": 1788728740074,
+            "magnitude_sigma": 4.078253184565986
+          }
+        ],
+        "pump-02.vibration_mm_s": [
+          {
+            "kind": "level_shift",
+            "origin": "deploy",
+            "t_start_ms": 1788728740552,
+            "t_end_ms": 1788728797724,
+            "magnitude_sigma": -3.615000538930578
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "event_id": "deploy-0014",
+        "kind": "deploy",
+        "t_start_ms": 1788728757899,
+        "t_end_ms": 1788728767168,
+        "severity": "warning",
+        "detail": "config change: scrape interval lowered on the nevada fleet (v1.4.8)",
+        "scope": [
+          "pump-00.bearing_temp_c",
+          "pump-01.flow_m3_h",
+          "pump-02.discharge_pressure_bar",
+          "pump-02.vibration_mm_s"
+        ],
+        "perturbed_telemetry": true
+      },
+      "artifacts": {
+        "pump-00.bearing_temp_c": [
+          {
+            "kind": "spike",
+            "origin": "deploy",
+            "t_start_ms": 1788728759083,
+            "t_end_ms": 1788728759083,
+            "magnitude_sigma": 6.926776990641157
+          }
+        ],
+        "pump-01.flow_m3_h": [
+          {
+            "kind": "variance_burst",
+            "origin": "deploy",
+            "t_start_ms": 1788728759939,
+            "t_end_ms": 1788728828461,
+            "magnitude_sigma": -5.442663306802333
+          }
+        ],
+        "pump-02.discharge_pressure_bar": [
+          {
+            "kind": "variance_burst",
+            "origin": "deploy",
+            "t_start_ms": 1788728758482,
+            "t_end_ms": 1788728779224,
+            "magnitude_sigma": -6.167567240358343
+          }
+        ],
+        "pump-02.vibration_mm_s": [
+          {
+            "kind": "variance_burst",
+            "origin": "deploy",
+            "t_start_ms": 1788728759956,
+            "t_end_ms": 1788728815155,
+            "magnitude_sigma": 4.459675909625801
+          }
+        ]
+      }
+    }
+  ],
+  "faults": {
+    "pump-02.vibration_mm_s": [
+      {
+        "kind": "spike",
+        "origin": "fault",
+        "t_start_ms": 1788727995695,
+        "t_end_ms": 1788727995695,
+        "magnitude_sigma": -5.048638509599332
+      },
+      {
+        "kind": "level_shift",
+        "origin": "fault",
+        "t_start_ms": 1788728759482,
+        "t_end_ms": 1788728813314,
+        "magnitude_sigma": -5.3870775964986475
+      }
+    ],
+    "pump-00.vibration_mm_s": [
+      {
+        "kind": "level_shift",
+        "origin": "fault",
+        "t_start_ms": 1788727907785,
+        "t_end_ms": 1788727964940,
+        "magnitude_sigma": -5.643675445999776
+      },
+      {
+        "kind": "variance_burst",
+        "origin": "fault",
+        "t_start_ms": 1788728001195,
+        "t_end_ms": 1788728068741,
+        "magnitude_sigma": 4.833733878872689
+      },
+      {
+        "kind": "variance_burst",
+        "origin": "fault",
+        "t_start_ms": 1788728067955,
+        "t_end_ms": 1788728117037,
+        "magnitude_sigma": 4.8001979697551045
+      },
+      {
+        "kind": "variance_burst",
+        "origin": "fault",
+        "t_start_ms": 1788728514557,
+        "t_end_ms": 1788728565568,
+        "magnitude_sigma": -4.732928773471682
+      }
+    ],
+    "pump-02.discharge_pressure_bar": [
+      {
+        "kind": "level_shift",
+        "origin": "fault",
+        "t_start_ms": 1788728490788,
+        "t_end_ms": 1788728560187,
+        "magnitude_sigma": -6.921066245054038
+      },
+      {
+        "kind": "variance_burst",
+        "origin": "fault",
+        "t_start_ms": 1788728590528,
+        "t_end_ms": 1788728669587,
+        "magnitude_sigma": -6.369893235919526
+      }
+    ],
+    "pump-01.flow_m3_h": [
+      {
+        "kind": "level_shift",
+        "origin": "fault",
+        "t_start_ms": 1788727984695,
+        "t_end_ms": 1788728006612,
+        "magnitude_sigma": 6.845783730123069
+      },
+      {
+        "kind": "level_shift",
+        "origin": "fault",
+        "t_start_ms": 1788728553322,
+        "t_end_ms": 1788728633912,
+        "magnitude_sigma": -4.6988435406502065
+      },
+      {
+        "kind": "spike",
+        "origin": "fault",
+        "t_start_ms": 1788728685262,
+        "t_end_ms": 1788728685262,
+        "magnitude_sigma": 7.0476009524309795
+      }
+    ],
+    "pump-01.vibration_mm_s": [
+      {
+        "kind": "spike",
+        "origin": "fault",
+        "t_start_ms": 1788727992038,
+        "t_end_ms": 1788727992038,
+        "magnitude_sigma": -6.912611859025508
+      },
+      {
+        "kind": "spike",
+        "origin": "fault",
+        "t_start_ms": 1788728227105,
+        "t_end_ms": 1788728227105,
+        "magnitude_sigma": 4.4237447821803375
+      },
+      {
+        "kind": "spike",
+        "origin": "fault",
+        "t_start_ms": 1788728368474,
+        "t_end_ms": 1788728368474,
+        "magnitude_sigma": -4.100722403497855
+      },
+      {
+        "kind": "variance_burst",
+        "origin": "fault",
+        "t_start_ms": 1788728596361,
+        "t_end_ms": 1788728656877,
+        "magnitude_sigma": 8.658979162538117
+      }
+    ],
+    "pump-02.bearing_temp_c": [
+      {
+        "kind": "variance_burst",
+        "origin": "fault",
+        "t_start_ms": 1788728181565,
+        "t_end_ms": 1788728264668,
+        "magnitude_sigma": 4.750696463582549
+      }
+    ],
+    "pump-02.flow_m3_h": [
+      {
+        "kind": "level_shift",
+        "origin": "fault",
+        "t_start_ms": 1788727935324,
+        "t_end_ms": 1788728017280,
+        "magnitude_sigma": -5.8695055251793296
+      },
+      {
+        "kind": "level_shift",
+        "origin": "fault",
+        "t_start_ms": 1788727985618,
+        "t_end_ms": 1788728012326,
+        "magnitude_sigma": 7.302092083713527
+      },
+      {
+        "kind": "variance_burst",
+        "origin": "fault",
+        "t_start_ms": 1788728095708,
+        "t_end_ms": 1788728161075,
+        "magnitude_sigma": -7.752320581818973
+      },
+      {
+        "kind": "level_shift",
+        "origin": "fault",
+        "t_start_ms": 1788728572458,
+        "t_end_ms": 1788728614703,
+        "magnitude_sigma": 6.818665031627604
+      },
+      {
+        "kind": "level_shift",
+        "origin": "fault",
+        "t_start_ms": 1788728757787,
+        "t_end_ms": 1788728835417,
+        "magnitude_sigma": -7.444326812972912
+      }
+    ],
+    "pump-01.bearing_temp_c": [
+      {
+        "kind": "level_shift",
+        "origin": "fault",
+        "t_start_ms": 1788727918847,
+        "t_end_ms": 1788727996690,
+        "magnitude_sigma": 6.894606262518533
+      },
+      {
+        "kind": "spike",
+        "origin": "fault",
+        "t_start_ms": 1788728364434,
+        "t_end_ms": 1788728364434,
+        "magnitude_sigma": 8.396895023919896
+      },
+      {
+        "kind": "level_shift",
+        "origin": "fault",
+        "t_start_ms": 1788728702074,
+        "t_end_ms": 1788728737089,
+        "magnitude_sigma": 5.560598526381595
+      }
+    ],
+    "pump-00.flow_m3_h": [
+      {
+        "kind": "variance_burst",
+        "origin": "fault",
+        "t_start_ms": 1788727911447,
+        "t_end_ms": 1788727941399,
+        "magnitude_sigma": 4.808329189887022
+      },
+      {
+        "kind": "level_shift",
+        "origin": "fault",
+        "t_start_ms": 1788728166545,
+        "t_end_ms": 1788728241438,
+        "magnitude_sigma": 7.261000838438541
+      }
+    ],
+    "pump-00.bearing_temp_c": [
+      {
+        "kind": "spike",
+        "origin": "fault",
+        "t_start_ms": 1788727974092,
+        "t_end_ms": 1788727974092,
+        "magnitude_sigma": -6.4266418643645995
+      },
+      {
+        "kind": "level_shift",
+        "origin": "fault",
+        "t_start_ms": 1788728609745,
+        "t_end_ms": 1788728631877,
+        "magnitude_sigma": 4.7224974019238415
+      }
+    ],
+    "pump-01.discharge_pressure_bar": [
+      {
+        "kind": "spike",
+        "origin": "fault",
+        "t_start_ms": 1788728319359,
+        "t_end_ms": 1788728319359,
+        "magnitude_sigma": 7.433718884690986
+      }
+    ],
+    "pump-00.discharge_pressure_bar": [
+      {
+        "kind": "level_shift",
+        "origin": "fault",
+        "t_start_ms": 1788728324942,
+        "t_end_ms": 1788728393444,
+        "magnitude_sigma": 7.6497133551165994
+      }
+    ]
+  },
+  "populations": {
+    "perturbing_deploys": 9,
+    "quiet_deploys": 5,
+    "faults_inside_deploy_windows": 13,
+    "faults_outside_deploy_windows": 17
+  }
+}

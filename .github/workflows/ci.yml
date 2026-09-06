@@ -159,6 +159,12 @@ jobs:
               for line_no, line in enumerate(text.splitlines(), 1):
                   for char in line:
                       if unicodedata.category(char) == "So" and ord(char) > 0x2100:
+                          # Box drawing, block elements and geometric shapes are line art.
+                          # The architecture diagrams in docs/ are drawn with them, and a
+                          # check that cannot tell a box corner from a party popper would
+                          # be met by redrawing the diagrams rather than by removing emoji.
+                          if 0x2500 <= ord(char) <= 0x25FF:
+                              continue
                           offenders.append(f"{path}:{line_no}: {char!r}")
           if offenders:
               print("\n".join(offenders[:40]))

@@ -146,7 +146,7 @@ doing its job.
 
 Raw result: `docs/results/paired-evaluation-v1-corroboration-only.json`.
 
-#### v2 -- corroboration requires synchrony
+#### v2 -- corroboration requires synchrony. ALSO FAILED, and for a reason that invalidates the test.
 
 The diagnosis pointed at a physical distinction rather than a threshold to tune. A deploy
 artifact hits the channels it touched **at the same instant** -- a collector restart blips
@@ -158,8 +158,63 @@ start times rather than window buckets.
 Re-measured on the **same scenario at the same density and the same seed**, so the only
 variable is the policy.
 
-**Not yet measured at the time of writing.** The result will be recorded here whatever it
-says, next to v1 -- publishing only the second number would be tuning until it passes.
+Run `753ddb71`, same command, same seed, 360,014 readings, identical ground truth
+(30 real faults, 56 artifacts, 14 deploy windows). Reconciliation reported zero drift and
+31 health windows, none disturbed.
+
+| Measure | Shadow | Conditioned | Delta |
+|---|---|---|---|
+| Episodes recorded | 78 | 78 | |
+| Pages raised | 78 | 72 | -6 |
+| False pages (artifact + unexplained) | 67 | 61 | **-6** |
+| of which artifact-driven | 44 | 39 | -5 |
+| Recall, all real faults | 83.3% (25/30) | 73.3% (22/30) | **-10.0%** |
+| Recall, faults **outside** windows | 70.6% (12/17) | 58.8% (10/17) | -11.8% |
+| Recall, faults **inside** windows | 100.0% (13/13) | 92.3% (12/13) | -7.7% |
+| Recall, faults in **quiet** windows | 100.0% (3/3) | 66.7% (2/3) | -33.3% |
+| Precision (incident-level) | 14.1% | 15.3% | +1.2% |
+
+**false-positive reduction +9.0% (target >= 40%, missed) -- recall loss +10.0% (tolerance
+<= 5%, missed). NFR-8 NOT MET.**
+
+Verdicts: `corroborated=6, implausible=72, isolated=0`. Six attributions, of which the
+recall column says roughly half took a real fault with them. v1 over-suppressed; v2 barely
+suppresses, and still loses recall. Raw result:
+`docs/results/paired-evaluation-v2-synchrony.json`.
+
+#### Why v2 failed, and what it means for v1
+
+The synchrony criterion was never actually exercised at the resolution it was written for.
+
+An `Episode`'s `t_start_ms` is the start of the **window** that first flagged it
+(`src/vigil/episodes.py`), and windows slide by 10 s. So the only start-time gaps two
+episodes can have are 0 s, 10 s, 20 s, ... A synchrony tolerance of 5 s selects exactly one
+of those: **zero**. What v2 measured was not "did these channels move within 5 seconds of
+each other" but "did they first get flagged in the very same window bucket".
+
+Measured against the ground-truth plan for this run, the artifacts of a perturbing deploy
+land like this:
+
+| Statistic over in-scope artifact onsets | Value |
+|---|---|
+| Spread between first and last onset in one deploy | median 13.3 s, max 57.7 s |
+| Gap between consecutive in-scope onsets | median 1.8 s, p90 11.5 s |
+| Consecutive pairs within 5 s of each other | 33 of 47 (70%) |
+| Consecutive pairs within 1 s | 16 of 47 (34%) |
+
+So at data resolution the artifacts *are* mostly within a few seconds of each other, which is
+the signal the policy was designed around -- but the episode record rounds those few seconds
+to a 10 s grid before the policy ever sees them.
+
+That reframes v1 too. Both attempts asked a coincidence question at two different bucket
+widths: v1 at 30 s (any overlap in the window), v2 at 0 s (the same bucket). Neither asked
+the intended physical question. **The synchrony hypothesis is untested, not refuted**, and
+this measurement does not support a claim in either direction about it.
+
+What can be claimed from the two runs: the **mechanism check works**. In both, every episode
+overlapping a pipeline event that had lost nothing was raised as `implausible` rather than
+attributed (72 of 78 here), which is the reconciliation-conditioning half of the design
+doing exactly its job.
 
 #### What this measurement does not establish
 
@@ -175,6 +230,13 @@ says, next to v1 -- publishing only the second number would be tuning until it p
 - **The shadow baseline's own recall is 83.3%, not 100%.** Five real faults were never
   detected by the z-score detector at all, conditioning or no conditioning. That is a
   detector limitation and it caps what any conditioning policy can preserve.
+- **v1 and v2 are the same scenario, not the same stream.** Within a run the two passes
+  replay byte-identical records, which is what makes the pair a controlled comparison. Across
+  runs the scenario is regenerated from the same seed and the same parameters, and the
+  ground truth comes out identical (30 / 56 / 14), but the shadow pass differs slightly
+  anyway -- 79 episodes at 19.0% precision in v1 against 78 at 14.1% in v2 -- because deploy
+  timing is anchored to wall clock and window boundaries fall differently. Compare v1 and v2
+  at the level of the effect, not digit by digit.
 
 ## 4. Q2 — detector vs. baseline on TSB-AD-M
 

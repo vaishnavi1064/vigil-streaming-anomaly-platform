@@ -47,6 +47,42 @@ architect's call, and because it spends money on hardware.
 **Not blocking anything.** The deterministic planner is in place and the agent loop is
 complete; work continues elsewhere.
 
+### B-4. Both conditioning measurements asked a coincidence question, not a synchrony question. Fix the episode record and measure a third time, or stop and publish the negative result?
+
+**What was measured.** v2 ran on 2026-09-06 (run `753ddb71`): false-positive reduction
+**+9.0%** against a >= 40% target, recall loss **10.0%** against a <= 5% tolerance. NFR-8
+not met, for the second time and in the opposite direction from v1 -- v1 over-suppressed
+(39 attributions, -36.7% recall), v2 barely suppresses (6 attributions, +9.0% FP reduction).
+
+**Why it failed.** An episode's `t_start_ms` is the start of the *window* that first flagged
+it, and windows slide by 10 s. The only start gaps two episodes can have are 0, 10, 20 ...
+seconds, so v2's 5 s synchrony tolerance selected exactly one of them: zero. v2 measured
+"first flagged in the same window bucket", not "moved within 5 seconds". v1 measured the
+same coincidence at a 30 s bucket. **The synchrony hypothesis has not been tested.**
+
+Ground truth for the same run says the signal is there to be found: in-scope artifact onsets
+within one deploy have a median consecutive gap of **1.8 s**, and 70% of consecutive pairs
+are within 5 s -- all of it below the 10 s grid the episode record rounds to.
+
+**The fork.**
+
+1. **Stop here and publish the negative result.** Two attempts, two honest failures, one
+   diagnosis each; `docs/EVALUATION.md` already carries all of it. This is what
+   `docs/PROGRESS.md` section 5 said to do if v2 missed, and it is a defensible place to
+   stop. The core mechanism that *did* work -- the plausibility check, 72 of 78 episodes
+   correctly raised rather than attributed -- stands on its own.
+2. **Fix the episode record, then measure v3.** Give `Episode` an onset time taken from the
+   sample that actually crossed the threshold rather than from the window boundary, then
+   re-run unchanged in every other respect. This is a defect fix rather than a policy tweak:
+   an episode that only knows which window noticed it is under-recording what it observed,
+   and the same field would sharpen detection-latency reporting and the dashboard. Cost:
+   a change to the episode schema and its store, plus one more 30-minute measurement.
+
+**Recommendation: 2, then publish v1, v2 and v3 together with this diagnosis.** Not taken
+autonomously because `docs/PROGRESS.md` section 5 explicitly said to stop after two attempts,
+and because a third attempt after two failures needs to be visibly a defect fix rather than a
+knob turn. If the answer is 1, nothing is lost: the diagnosis is already published.
+
 ## Decided by the architect
 
 | # | Question | Decision | Consequence |
