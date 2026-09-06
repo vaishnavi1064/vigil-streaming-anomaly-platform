@@ -336,3 +336,77 @@ def test_a_safety_channel_is_never_acted_on_end_to_end(channel):
     assert agent.executor.state.silenced == {}
     assert agent.executor.state.recalibration_requests == []
     assert agent.executor.state.escalations
+
+
+# ------------------------- abstention must be visible -------------------------
+# An episode that produces no proposal at all leaves no decision and no trace, which reads
+# exactly like an episode nobody looked at. Both ways that can happen are covered here.
+
+
+def coverage_gap_index():
+    """A runbook set that matches the query but licenses nothing useful for the symptom.
+
+    Real deployments look like this while runbooks lag the fleet: something is retrieved,
+    and none of it authorises the action the symptom calls for.
+    """
+    index = RunbookIndex()
+    index.add(
+        Passage(
+            runbook="thin.md",
+            title="Post-deploy settling after a variance burst",
+            text="A channel whose variance rises after a deploy is usually settling; the "
+            "burst subsides without intervention and only needs recording.",
+            licenses=("annotate_episode",),
+        )
+    )
+    return index
+
+
+def test_a_runbook_coverage_gap_escalates_rather_than_planning_nothing():
+    index = coverage_gap_index()
+    subject = episode(dispersion=True)
+    diagnosis = Diagnoser().diagnose(subject)
+    retrieved = index.search(diagnosis.query, limit=3)
+    assert retrieved, "this test is only meaningful when retrieval matched something"
+
+    actions = RunbookPlanner().plan(subject, 7, diagnosis, retrieved)
+
+    assert [a.kind for a in actions] == [ActionKind.ESCALATE_TO_HUMAN]
+    assert "license" in actions[0].parameters["reason"]
+
+
+def test_the_agent_backstops_a_planner_that_proposes_nothing():
+    """The planner seam accepts any implementation, including one that returns nothing."""
+
+    class SilentPlanner:
+        def plan(self, episode, episode_id, diagnosis, retrieved):
+            return []
+
+    agent = RemediationAgent(
+        runbooks=load_runbooks(RUNBOOKS),
+        gate=SafetyGate(policy=GatePolicy()),
+        executor=SandboxExecutor(),
+        planner=SilentPlanner(),
+    )
+    run = agent.handle(episode(), 42)
+
+    assert [s.action.kind for s in run.steps] == [ActionKind.ESCALATE_TO_HUMAN]
+    assert run.every_action_was_gated
+    assert agent.escalations == 1
+
+
+def test_the_backstop_escalation_is_gated_like_any_other_action():
+    class SilentPlanner:
+        def plan(self, episode, episode_id, diagnosis, retrieved):
+            return []
+
+    agent = RemediationAgent(
+        runbooks=load_runbooks(RUNBOOKS),
+        gate=SafetyGate(policy=GatePolicy()),
+        executor=SandboxExecutor(),
+        planner=SilentPlanner(),
+    )
+    run = agent.handle(episode(), 42)
+
+    assert all(s.decision is not None for s in run.steps)
+    assert run.steps[0].trace

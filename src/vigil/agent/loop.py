@@ -138,6 +138,20 @@ def _dominant_dispersion(episode: Episode) -> bool:
     return total > 0 and dispersion_wins * 2 > total
 
 
+def escalation(episode_id: int, reason: str, rationale: str) -> Action:
+    """The one proposal that is always defensible, and the only way to abstain.
+
+    Shared rather than duplicated because abstention has to look identical wherever it comes
+    from: an operator reading a trace should not have to tell "the planner had nothing" from
+    "the planner returned nothing".
+    """
+    return Action(
+        kind=ActionKind.ESCALATE_TO_HUMAN,
+        parameters={"episode_id": episode_id, "reason": reason},
+        rationale=rationale,
+    )
+
+
 class Planner(Protocol):
     """The seam where a model-backed planner plugs in.
 
@@ -164,13 +178,10 @@ class RunbookPlanner:
             # "The runbooks do not cover this" is a real answer, and it belongs with a human
             # rather than with an agent improvising.
             return [
-                Action(
-                    kind=ActionKind.ESCALATE_TO_HUMAN,
-                    parameters={
-                        "episode_id": episode_id,
-                        "reason": f"no runbook passage matches {diagnosis.summary}",
-                    },
-                    rationale="retrieval found nothing; escalating rather than improvising",
+                escalation(
+                    episode_id,
+                    f"no runbook passage matches {diagnosis.summary}",
+                    "retrieval found nothing; escalating rather than improvising",
                 )
             ]
 
@@ -252,6 +263,18 @@ class RunbookPlanner:
                     reason=diagnosis.summary,
                 )
 
+        if not proposed:
+            # Retrieval matched, but nothing those passages license applies to this symptom.
+            # Returning nothing would leave the episode with no proposal, no decision and no
+            # trace -- indistinguishable from an episode nobody looked at. The runbooks not
+            # covering a case is a human's answer to give, not a reason to go quiet.
+            return [
+                escalation(
+                    episode_id,
+                    f"retrieved passages license no action for {diagnosis.summary}",
+                    "runbook coverage gap; escalating rather than acting unlicensed",
+                )
+            ]
         return proposed
 
 
@@ -307,7 +330,19 @@ class RemediationAgent:
         retrieved = self.runbooks.search(diagnosis.query, limit=self.retrieval_limit)
         run = AgentRun(episode_id=episode_id, diagnosis=diagnosis, retrieved=retrieved)
 
-        for action in self.planner.plan(episode, episode_id, diagnosis, retrieved):
+        actions = self.planner.plan(episode, episode_id, diagnosis, retrieved)
+        if not actions:
+            # The planner seam takes any implementation, including a model that replies with
+            # an empty list. The agent does not rely on the planner to abstain correctly.
+            actions = [
+                escalation(
+                    episode_id,
+                    f"planner proposed nothing for {diagnosis.summary}",
+                    "empty plan; escalating rather than leaving the episode unhandled",
+                )
+            ]
+
+        for action in actions:
             decision = self.gate.verdict(action, episode, episode_id)
             result: ExecutionResult | None = None
             if decision.approved:
