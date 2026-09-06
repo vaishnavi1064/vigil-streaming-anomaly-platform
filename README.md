@@ -4,10 +4,14 @@ Real-time anomaly detection on a streaming backbone, where the detector is condi
 operational context -- pipeline health and deploy markers -- so that genuine incidents are
 separated from artifacts of the pipeline itself.
 
-**Status: Phase 1 of 6 complete.** The detection spine runs end to end. Phases 2-6
-(Flink and exactly-once, the reconciliation harness and the conditioning core, ClickHouse
-and Iceberg, the VLM explainer and remediation agent, evaluation and CI) are not built.
-This README describes what exists, not what is planned; `BUILD.md` has the roadmap.
+**Status: phases 1-4 built, phase 3's target missed and published as missed.** The
+detection spine, the correctness backbone (Flink with two-phase commit, the reconciliation
+harness, a chaos suite, the scaling curve) and the safety-gated agent all run. The
+conditioning core -- the actual contribution -- has been measured twice against its target
+and missed it twice; both results and the diagnosis are in `docs/EVALUATION.md` section 3.4
+rather than filed away. ClickHouse, Iceberg, the VLM explainer and the production wrapper
+are not built. This README describes what exists, not what is planned; `BUILD.md` has the
+roadmap and `docs/BLOCKERS.md` has what is waiting on a human.
 
 ---
 
@@ -20,17 +24,26 @@ below comes from a command recorded in `docs/EVALUATION.md`.
 | | |
 |---|---|
 | Ingest throughput, single process, blast mode | **76,556 events/s** (NFR-4 target: 20,000) |
-| Consumer throughput, replaying a filled topic | **43,160 readings/s** |
+| Consumer throughput, one process draining a 3.9 M backlog | **94,495 readings/s** |
+| Consumer throughput, plateau | **170,414 readings/s** at 3-6 consumers over 6 partitions |
+| Scaling | 1.80x at six consumers, efficiency 30%. **NFR-5's near-linear claim: not met** |
 | Hot-path detection latency, p99 | **0.49 ms** (NFR-1 budget: 250 ms) |
 | Foundation model, off critical path, p99 | 34.8 ms amortised per window |
-| End-to-end gate run | 252,000 readings produced, **252,000 consumed**, 0 late, 0 dropped |
+| Reconciliation drift | **0** over 360,000 readings, verified by independent broker-offset audit |
+| Chaos | **4/4** fault modes recovered to a verified consistent state, each proven to have disrupted something |
+| Flink parity | 1,056 windows scored, differences of exactly **0.0000** against the Python detector, 30 checkpoints at 283 ms average |
+| Context conditioning vs. the unconditioned baseline | +9.0% false-page reduction against a 40% target, -10.0% recall against a 5% tolerance. **NFR-8: not met, twice** |
 | Live feed | 1,387 MQTT messages -> 11,089 readings across 336 channels in 45 s, 0 gaps |
-| Tests | **202 passing** (unit, plus integration against real Kafka and Postgres) |
+| Tests | **500** (unit, plus 29 integration against real Kafka and Postgres) |
 
-Two things these numbers are **not**: the producer and consumer figures were taken
-separately, so neither is an end-to-end throughput claim; and the gate run is a single
-seven-minute observation, not the zero-drift proof, which needs the Phase 2 reconciliation
-harness. See `docs/CORRECTNESS.md` for where each guarantee starts and stops.
+What these numbers are **not**. The producer and consumer figures were taken separately, so
+neither is an end-to-end throughput claim. Zero drift is measured over 15 minutes, not the
+four hours NFR-6 asks for. The Flink exactly-once path has never been fault-tested, so that
+guarantee currently rests on configuration rather than on evidence from this deployment. And
+the conditioning result is a **failure, published as one**: the second attempt turned out to
+be testing something other than what it claimed, which is written up in full rather than
+retried until it passed. `docs/CORRECTNESS.md` says where each guarantee starts and stops;
+`docs/BLOCKERS.md` lists every gap of this kind in one table.
 
 ![The Phase 1 dashboard: KPI tiles for episode count and per-detector latency against the
 250 ms hot-path budget, a bar comparison of episodes raised by each detector, and a table of
@@ -107,16 +120,33 @@ python mqtt_bridge.py --topic inverters
 python -m uvicorn vigil.api:app --port 8000
 ```
 
-Measure throughput instead:
+Reproduce the measurements. Each writes its raw result under `docs/results/` and each
+number in this README came from one of them:
 
 ```bash
-python loadgen.py --rate 0 --duration 30 --channels 32     # blast mode, reports events/s
+# producer throughput, blast mode
+python loadgen.py --rate 0 --duration 30 --channels 32
+
+# consumer throughput against parallelism -- the curve in docs/SCALE.md
+python scale.py --fill 300000 --parallelism 1,2,3,4,6,8 --report-json docs/results/scale-sweep.json
+
+# reconciliation: per-channel sequence identity plus an independent broker-offset audit
+python reconciler.py --from-beginning --stop-after-idle-s 12
+
+# the chaos suite: four fault modes, each required to prove it disrupted something
+python chaos.py --all --report-json docs/results/chaos.json
+
+# the paired evaluation: shadow, conditioned and fail-open passes over byte-identical data
+python evaluate.py --duration 900 --rate 400 --channels 12     --deploys-per-hour 60 --faults-per-hour 120     --report-json docs/results/paired.json
+
+# the labelled benchmark, detector against baseline
+python benchmark.py --report-json docs/results/benchmark.json
 ```
 
 Tests:
 
 ```bash
-python -m pytest                       # all 202, needs docker compose up for the integration ones
+python -m pytest                       # all 500, needs docker compose up for the integration ones
 python -m pytest -m "not integration"  # unit only
 ```
 
@@ -151,7 +181,7 @@ comparable to them.
 | File | What it holds |
 |---|---|
 | `docs/PROGRESS.md` | Status board, work log, error log, and the exact next action |
-| `docs/DECISIONS.md` | 17 ADRs -- what was decided, what was rejected, what it cost |
+| `docs/DECISIONS.md` | 31 ADRs -- what was decided, what was rejected, what it cost |
 | `docs/CORRECTNESS.md` | The guarantee at each boundary, and what it does not cover |
 | `docs/EVALUATION.md` | Methodology, measured numbers, and the metrics deliberately refused |
 | `docs/BLOCKERS.md` | Anything deferred, stubbed, or needing a human |
