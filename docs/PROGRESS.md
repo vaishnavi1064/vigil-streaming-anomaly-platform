@@ -29,19 +29,19 @@ Phases are from `BUILD.md` section 7; stories from `docs/USER_STORIES.md`.
 | Story | Title | Status |
 |---|---|---|
 | A1 | Durable ingestion (gap-detect + backfill) | **Done, scope corrected** - live MQTT source + gap detection. Backfill is impossible on this feed; edge guarantee restated as at-most-once (ADR-011) |
-| A2 | Exactly-once processing (Flink, 2PC) | Not started - Phase 2. Today: at-least-once consume + idempotent sink = effectively-once at the sink (docs/CORRECTNESS.md) |
+| A2 | Exactly-once processing (Flink, 2PC) | **Written, not yet run** - PyFlink job with event-time watermarks, RocksDB, incremental + unaligned checkpoints, transactional Kafka sink. 14 parity tests prove it computes what the Python detector computes. Image built; job not yet submitted |
 | B1 | Reconciliation harness | **Done** - per-channel sequence identity + independent broker-offset audit. Measured drift 0 over 252,000 readings. 42 tests |
 | B2 | Pipeline-health signal | **Done** - per-window `PipelineHealth` on `ops.context` as `kind=pipeline`, same wire and schema as a deploy marker (ADR-003). Emitted for clean windows too, so 'clean' is distinguishable from 'no signal' |
 | C1 | Z-score baseline detector | **Done** - Welford, decayed reference, mean + dispersion, 18 tests |
 | C2 | Foundation-model detector | **Done** - Chronos-Bolt-tiny zero-shot, batched off the critical path, 16 tests |
-| D1 | Reconciliation-gated detection | Not started |
-| D2 | Deploy-marker conditioning | **Partial** - markers generated, published to `ops.context`, persisted. The conditioning policy that consumes them is Phase 3 |
-| D3 | Pluggable conditioning interface | Not started |
+| D1 | Reconciliation-gated detection | **Built, measuring** - pipeline health consumed through `ContextSignalSource`; attribution requires a plausible mechanism (actual loss/duplication), not mere overlap |
+| D2 | Deploy-marker conditioning | **Built, measuring** - scope enforcement + corroboration across scope. An isolated excursion during a deploy stays real |
+| D3 | Pluggable conditioning interface | **Done** - `ContextSignalSource` with static/Kafka/composite implementations; pipeline and deploy signals share one wire, one schema, one interface |
 | E1 | Explained anomaly (VLM, flagged windows only) | Not started |
 | F1 | Safety-gated remediation | Not started |
 | G1 | Live dashboard | **Partial** - episodes, per-detector comparison, latency vs. budget. Reconciliation panel absent until Phase 2, and the page says why |
 | H1 | Throughput harness | **Partial** - loadgen measures producer-side throughput (76,556 ev/s blast). Consumer-side and the parallelism curve are Phase 2 |
-| H2 | Chaos suite | **In progress** - 4 fault modes built (broker kill, broker pause, network partition, consumer kill); recovery verified by an independent replay of the log. 14 unit tests |
+| H2 | Chaos suite | **Done** - 4 fault modes, all broke 20/20 serviceability samples, all recovered within the 60s budget, drift 0 verified by independent replay. `docs/CHAOS.md`. 18 unit tests |
 | I1 | Honest detection benchmark | Not started - corpus downloaded, metrics chosen (ADR-013) |
 | I2 | CI quality gate | Not started |
 
@@ -53,6 +53,9 @@ Phases are from `BUILD.md` section 7; stories from `docs/USER_STORIES.md`.
 |---|---|---|
 | 2026-09-05 | `67630bb` | **Phase 1 gate passed.** Wrote `docs/CORRECTNESS.md` (guarantee per boundary + what is not covered), filled `docs/EVALUATION.md` sections 5.1a-5.1d with measured numbers, wrote `README.md`. |
 | 2026-09-05 | `4e55212` | **Phase 2 started.** Reconciliation harness: per-channel sequence identity, independent broker-offset audit, per-window health signal on the context topic. Chaos suite: 4 fault modes with recovery verified by independent replay. Scale harness: parallelism sweep over a fixed pre-filled backlog. |
+| 2026-09-06 | `f011835` | **Chaos verified** (4/4, disruption proven), `docs/CHAOS.md`, the paired evaluation harness (`evaluate.py`), and conditioning wired into the detector behind `--conditioning`. |
+| 2026-09-06 | `28e09ac` | **The core contribution.** `ContextSignalSource` interface + the conditioning policy: scope enforcement, corroboration across scope, and mechanism plausibility. 34 tests organised around the ways it can go wrong. |
+| 2026-09-06 | `ff8f5de` | Chaos scenarios now have to prove they disrupted something. Flink job + container image. |
 | 2026-09-05 | `67630bb` | Minimal dashboard + FastAPI backend. Validated palette (all-pairs CVD/contrast pass in both modes), status as glyph+word, screenshot-verified in light and dark. Reconciliation panel deliberately absent with an on-page explanation. 11 API tests. |
 | 2026-09-05 | `0837598` | Zero-shot Chronos-Bolt detector running alongside the baseline, batched off the critical path via a bounded-queue worker thread. Measured the whole Bolt family on this CPU. Fixed a context-leakage bug and a threading race. 27 tests. |
 | 2026-09-05 | `d7a8f04`, `396a670` | Detection spine: event-time sliding windows (per-channel watermarks, lateness, thin-window drop), z-score baseline over Welford with a decayed reference, episode merging, Postgres schema + idempotent sink. 54 tests including 18 against real Postgres. |
@@ -87,6 +90,11 @@ is not hit twice.
 | 12 | `docker exec ... kafka-topics.sh` resolved to a Windows path | Git Bash rewrites POSIX-looking arguments. | `MSYS_NO_PATHCONV=1` prefix. |
 | 13 | The reconciliation harness emitted 187,631 health windows for a 7-minute run, nearly all with a single reading | Windows were closed against the **maximum** event time seen. Kafka serves partitions in bursts, so one partition raced minutes ahead and closed windows the others had not reached; each later reading then re-opened and re-emitted the same window. | Close windows against the **minimum** event time across sources, and never re-open a window that has already been emitted. |
 | 14 | After that fix, 51% of readings still arrived after their window closed | Sources were discovered lazily, on first delivery. A partition Kafka had not yet served was indistinguishable from one that did not exist, so the minimum was taken over a subset. | Register every partition on assignment via the rebalance callback; a registered-but-silent source blocks the watermark entirely. Plus an idleness timeout so an empty partition cannot stall forever. Result: 0% late. |
+| 16 | The chaos suite reported 4/4 passes, three of which meant nothing | Only `broker-kill` actually disrupted anything. The producer logged no errors during the broker pause or the network partition, and both reported 0.0s recovery. Injecting a fault does not imply it bit. | Sample serviceability once a second throughout the hold; a scenario with zero unhealthy samples now fails. |
+| 17 | The network-partition health check reported healthy throughout an applied partition | It tested only the Kafka client path, and Docker's published-port proxy keeps answering the TCP handshake after a container leaves its network. | Inspect the container's network attachments directly as well. |
+| 18 | `consumer-kill` measured 0.0s recovery | Its health check returned true the instant the process exited, so it measured how long it took to notice a dead process was dead. | Restart the detector through a caller-supplied factory and define recovery as consumer-group lag returning to near zero. Real figure: 25.1s. |
+| 19 | `pip3 install --break-system-packages` failed in the Flink image | The base image is Ubuntu 22.04, whose pip predates that flag -- and it is not externally-managed, so the flag was unnecessary. | Dropped the flag. |
+| 20 | Conditioning reported `no_context` for an out-of-scope deploy | The signal *source* was filtering by scope, so an out-of-scope deploy was indistinguishable from no deploy at all. | Sources filter on time; the policy owns scope, so it can tell an operator "there was a deploy but it did not touch this channel". |
 | 15 | Every window of a replay graded `critical` | Lag is measured against the wall clock, so replaying a topic recorded minutes ago honestly reports minutes of lag. True, but it is a fact about the data's age, not a live disturbance -- and it would have made conditioning suppress everything. | Added `--ignore-lag` for replays and benchmarks; live runs still grade on lag. The measurement stays in the record either way; only the severity judgement changes. |
 
 ---
@@ -114,22 +122,33 @@ ADRs live in `docs/DECISIONS.md`. Design-phase ADR-001..008 predate this build.
 | 015 | Schedule the evaluation adversarially so blanket suppression fails visibly | 1 |
 | 016 | Report false-positive reduction and recall as a pair, never a single number | 1 |
 | 017 | The latency budget binds the hot path, not the foundation model | 1 |
+| 018 | Build the reconciliation harness before Flink | 2 |
+| 019 | Watermarks take the minimum across sources, with an idleness timeout | 2 |
+| 020 | Lag grading is separable from loss grading | 2 |
+| 021 | A chaos scenario must prove it disrupted something | 2 |
+| 022 | Run Flink as containers with PyFlink, not as a host process or a Java job | 2 |
 
 ---
 
 ## 5. Next up
 
-**Exact next action:** finish the chaos suite run (`python chaos.py --all --report-json
-docs/results/chaos.json`), then:
+**In flight right now:** `python evaluate.py --duration 900 --rate 400 --channels 12` -- the
+paired shadow-vs-conditioned measurement for NFR-8. This is the number the project exists to
+produce.
 
-1. Write `docs/CHAOS.md` from the measured results -- fault, recovery time, and the
-   consistency verdict from the independent replay.
-2. Run the scale sweep (`python scale.py --fill 300000 --parallelism 1,2,3,4,6,8`) and write
+**Then, in order:**
+
+1. Record the paired result in `docs/EVALUATION.md` section 3.4, whatever it says. If
+   conditioning does not clear the 40%/~0% bar, that is the finding and it gets published
+   with the reasoning, not tuned until it passes.
+2. Run the scale sweep (`python scale.py --fill 300000 --parallelism 1,2,3,4,6,8`), write
    `docs/SCALE.md` with the curve and where it plateaus.
-3. Start the multi-hour soak for NFR-6 (>= 4 hours, drift 0) in the background. It has to run
-   *after* chaos and scale, since both deliberately break or saturate the stack.
-4. **Flink (A2)** last, once the harness can prove the migration preserved semantics. Java 17
-   is present. Expect this to be the largest single piece of the project.
+3. Submit the Flink job (`docker compose --profile flink up -d`, then `flink run -py
+   /opt/vigil/scoring_job.py`), reconcile its output against the Python detector's on the
+   same readings, and add a Flink checkpoint-recovery chaos scenario.
+4. Start the multi-hour soak for NFR-6 (>= 4 hours, drift 0). It must run after chaos and
+   scale, both of which deliberately break or saturate the stack.
+5. Phase 3 remainder: ClickHouse for serving, Iceberg as the durable lake.
 
 ## 6. Phase 1 gate evidence
 
