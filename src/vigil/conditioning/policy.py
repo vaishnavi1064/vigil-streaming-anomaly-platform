@@ -180,7 +180,7 @@ class ConditioningPolicy:
         # More than one event can overlap. Take the strongest explanation available, and
         # keep the best rejection so the reason is informative when nothing explains it.
         best_rejection: Attribution | None = None
-        for event in sorted(lookup.events, key=lambda e: (e.kind is ContextKind.PIPELINE)):
+        for event in sorted(lookup.events, key=lambda e: e.kind is ContextKind.PIPELINE):
             attribution = self._consider(episode, event)
             if attribution.status is EpisodeStatus.ATTRIBUTED:
                 return self._record(attribution)
@@ -302,9 +302,7 @@ class ConditioningPolicy:
         )
 
     def _record(self, attribution: Attribution) -> Attribution:
-        self.verdicts[str(attribution.verdict)] = (
-            self.verdicts.get(str(attribution.verdict), 0) + 1
-        )
+        self.verdicts[str(attribution.verdict)] = self.verdicts.get(str(attribution.verdict), 0) + 1
         if attribution.status is EpisodeStatus.ATTRIBUTED:
             self.attributed += 1
         return attribution

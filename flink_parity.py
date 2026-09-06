@@ -153,9 +153,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  {len(flink):,} scored windows", flush=True)
 
     print(f"replaying {kafka.readings_topic!r} through the Python detector...", flush=True)
-    python = collect_python_scores(
-        bootstrap, args.topic or kafka.readings_topic, args.idle_s, args
-    )
+    python = collect_python_scores(bootstrap, args.topic or kafka.readings_topic, args.idle_s, args)
     print(f"  {len(python):,} scored windows", flush=True)
 
     shared = sorted(set(flink) & set(python))
@@ -184,13 +182,22 @@ def main(argv: list[str] | None = None) -> int:
     signed = [flink[k] - python[k] for k in shared]
     agree = sum(1 for d, k in zip(diffs, shared, strict=True) if d <= args.tolerance)
 
-    print(f"\nagreement within +/-{args.tolerance}: {agree:,}/{len(shared):,} "
-          f"({100 * agree / len(shared):.1f}%)", flush=True)
-    print(f"absolute difference   median {statistics.median(diffs):.4f} | "
-          f"mean {statistics.fmean(diffs):.4f} | max {max(diffs):.4f}", flush=True)
+    print(
+        f"\nagreement within +/-{args.tolerance}: {agree:,}/{len(shared):,} "
+        f"({100 * agree / len(shared):.1f}%)",
+        flush=True,
+    )
+    print(
+        f"absolute difference   median {statistics.median(diffs):.4f} | "
+        f"mean {statistics.fmean(diffs):.4f} | max {max(diffs):.4f}",
+        flush=True,
+    )
     if rel:
-        print(f"relative difference   median {statistics.median(rel):.2%} | "
-              f"mean {statistics.fmean(rel):.2%}", flush=True)
+        print(
+            f"relative difference   median {statistics.median(rel):.2%} | "
+            f"mean {statistics.fmean(rel):.2%}",
+            flush=True,
+        )
     # A systematic sign would mean one implementation is consistently harsher, which is a
     # semantic divergence rather than the scheduling noise the differences are meant to be.
     bias = statistics.fmean(signed)

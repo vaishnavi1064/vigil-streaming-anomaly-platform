@@ -134,9 +134,7 @@ def score_column(
     return out
 
 
-def window_labels(
-    labels: np.ndarray, starts: list[int], window_points: int
-) -> np.ndarray:
+def window_labels(labels: np.ndarray, starts: list[int], window_points: int) -> np.ndarray:
     """A window is anomalous if it contains any labelled point."""
     n = labels.size
     out = np.zeros(len(starts), dtype=np.int8)

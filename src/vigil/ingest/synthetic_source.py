@@ -85,9 +85,7 @@ class SyntheticFleetSource(ReadingSource):
         self.rate_per_s = rate_per_s
         self.duration_s = duration_s
         self._stopped = False
-        self._pending_context: list[ContextEvent] = (
-            self.plan.context_events() if self.plan else []
-        )
+        self._pending_context: list[ContextEvent] = self.plan.context_events() if self.plan else []
         self._context_at = 0
         self._t0_wall_ms = 0
 

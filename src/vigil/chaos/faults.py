@@ -31,9 +31,7 @@ class FaultError(RuntimeError):
 
 
 def docker(*args: str, timeout: int = 60) -> str:
-    result = subprocess.run(
-        ["docker", *args], capture_output=True, text=True, timeout=timeout
-    )
+    result = subprocess.run(["docker", *args], capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
         raise FaultError(f"docker {' '.join(args)} failed: {result.stderr.strip()}")
     return result.stdout.strip()
@@ -208,7 +206,9 @@ class NetworkPartition(Fault):
         # partition that had in fact been applied.
         try:
             networks = docker(
-                "inspect", "-f", "{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}",
+                "inspect",
+                "-f",
+                "{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}",
                 self.container,
             )
             if self.network not in networks.split():
@@ -368,8 +368,10 @@ class FlinkTaskManagerKill(Fault):
         # A job counts as recovered only once every task is running again. Flink reports the
         # job RUNNING while tasks are still being redeployed, and treating that as recovered
         # would time the container restart rather than the job's return to service.
-        return all(j.get("tasks", {}).get("running", 0) == j.get("tasks", {}).get("total", -1)
-                   for j in running)
+        return all(
+            j.get("tasks", {}).get("running", 0) == j.get("tasks", {}).get("total", -1)
+            for j in running
+        )
 
 
 ALL_FAULTS = {

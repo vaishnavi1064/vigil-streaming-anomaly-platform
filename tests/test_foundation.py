@@ -126,6 +126,7 @@ def test_an_unloadable_model_reports_a_degradation_rather_than_crashing():
 
 # --------------------- with real weights ---------------------
 
+
 @pytest.fixture(scope="module")
 def model():
     d = ChronosResidualDetector(bucket_ms=1_000, min_context_buckets=32)

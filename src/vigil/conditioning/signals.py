@@ -94,9 +94,7 @@ class StaticContextSource(ContextSignalSource):
     def signals_for(self, window: SignalWindow) -> SignalLookup:
         if not self._available:
             return SignalLookup.unavailable(self.name, "source marked unavailable")
-        hits = tuple(
-            e for e in self._events if e.overlaps(window.t_start_ms, window.t_end_ms)
-        )
+        hits = tuple(e for e in self._events if e.overlaps(window.t_start_ms, window.t_end_ms))
         return SignalLookup(events=hits, available=True, source=self.name)
 
 
@@ -206,9 +204,7 @@ class KafkaContextSource(ContextSignalSource):
         if self._failure:
             return SignalLookup.unavailable(self.name, self._failure)
         with self._lock:
-            hits = tuple(
-                e for e in self._events if e.overlaps(window.t_start_ms, window.t_end_ms)
-            )
+            hits = tuple(e for e in self._events if e.overlaps(window.t_start_ms, window.t_end_ms))
         return SignalLookup(events=hits, available=True, source=self.name)
 
     def close(self) -> None:

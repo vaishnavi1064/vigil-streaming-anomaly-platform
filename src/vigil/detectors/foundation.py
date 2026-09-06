@@ -136,9 +136,7 @@ class ChronosResidualDetector(WindowDetector):
                 time.perf_counter() - started,
             )
         except Exception as exc:  # noqa: BLE001 - any failure here is the same degradation
-            raise FoundationModelUnavailable(
-                f"could not load {self.model_id}: {exc}"
-            ) from exc
+            raise FoundationModelUnavailable(f"could not load {self.model_id}: {exc}") from exc
 
     @property
     def loaded(self) -> bool:

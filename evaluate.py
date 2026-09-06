@@ -138,15 +138,23 @@ def main(argv: list[str] | None = None) -> int:
         "producing the scenario",
         [
             "loadgen.py",
-            "--rate", str(args.rate),
-            "--duration", str(args.duration),
-            "--channels", str(args.channels),
+            "--rate",
+            str(args.rate),
+            "--duration",
+            str(args.duration),
+            "--channels",
+            str(args.channels),
             "--scenario",
-            "--seed", str(args.seed),
-            "--deploys-per-hour", str(args.deploys_per_hour),
-            "--faults-per-hour", str(args.faults_per_hour),
-            "--report-interval", "60",
-            "--write-plan", str(plan_path),
+            "--seed",
+            str(args.seed),
+            "--deploys-per-hour",
+            str(args.deploys_per_hour),
+            "--faults-per-hour",
+            str(args.faults_per_hour),
+            "--report-interval",
+            "60",
+            "--write-plan",
+            str(plan_path),
         ],
         timeout=args.duration + 300,
     )
@@ -157,11 +165,14 @@ def main(argv: list[str] | None = None) -> int:
         [
             "reconciler.py",
             "--from-beginning",
-            "--group", f"vigil-eval-recon-{stamp}",
-            "--stop-after-idle-s", "12",
+            "--group",
+            f"vigil-eval-recon-{stamp}",
+            "--stop-after-idle-s",
+            "12",
             "--ignore-lag",
             "--no-store",
-            "--report-interval", "60",
+            "--report-interval",
+            "60",
         ],
         timeout=900,
     )
@@ -169,10 +180,13 @@ def main(argv: list[str] | None = None) -> int:
     detector_args = [
         "detector.py",
         "--from-beginning",
-        "--stop-after-idle-s", "15",
+        "--stop-after-idle-s",
+        "15",
         "--no-foundation-model",
-        "--threshold", str(args.threshold),
-        "--report-interval", "60",
+        "--threshold",
+        str(args.threshold),
+        "--report-interval",
+        "60",
     ]
 
     # --- 3. shadow: the unconditioned baseline ---
@@ -190,10 +204,13 @@ def main(argv: list[str] | None = None) -> int:
         "conditioned pass (conditioning ON)",
         [
             *detector_args,
-            "--group", f"vigil-eval-cond-{stamp}",
+            "--group",
+            f"vigil-eval-cond-{stamp}",
             "--conditioning",
-            "--min-corroborating-channels", str(args.min_corroborating_channels),
-            "--min-scope-fraction", str(args.min_scope_fraction),
+            "--min-corroborating-channels",
+            str(args.min_corroborating_channels),
+            "--min-scope-fraction",
+            str(args.min_scope_fraction),
         ],
         env={"PGOPTIONS": f"-c search_path={conditioned_schema}"},
         timeout=1800,
@@ -202,9 +219,7 @@ def main(argv: list[str] | None = None) -> int:
     # --- 5. score the pair ---
     truth = GroundTruth.from_plan(plan_path)
     shadow = score_pass("shadow", read_episodes(postgres, shadow_schema), truth)
-    conditioned = score_pass(
-        "conditioned", read_episodes(postgres, conditioned_schema), truth
-    )
+    conditioned = score_pass("conditioned", read_episodes(postgres, conditioned_schema), truth)
     comparison = PairedComparison(
         shadow=shadow,
         conditioned=conditioned,

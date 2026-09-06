@@ -69,13 +69,20 @@ def fill_topic(bootstrap: str, count: int, rate: float, channels: int) -> int:
     print(f"filling the topic with ~{count:,} readings...", flush=True)
     proc = subprocess.run(
         [
-            str(PYTHON), str(REPO / "loadgen.py"),
-            "--rate", str(rate),
-            "--duration", str(duration if duration else 30),
-            "--channels", str(channels),
-            "--report-interval", "10",
+            str(PYTHON),
+            str(REPO / "loadgen.py"),
+            "--rate",
+            str(rate),
+            "--duration",
+            str(duration if duration else 30),
+            "--channels",
+            str(channels),
+            "--report-interval",
+            "10",
         ],
-        cwd=REPO, capture_output=True, text=True,
+        cwd=REPO,
+        capture_output=True,
+        text=True,
     )
     produced = 0
     for line in proc.stdout.splitlines():
@@ -116,14 +123,21 @@ def drain_with(consumers: int, group: str, idle_s: float) -> tuple[int, float]:
     procs = [
         subprocess.Popen(
             [
-                str(PYTHON), str(REPO / "detector.py"),
+                str(PYTHON),
+                str(REPO / "detector.py"),
                 "--from-beginning",
-                "--group", group,
+                "--group",
+                group,
                 "--no-foundation-model",
-                "--stop-after-idle-s", str(idle_s),
-                "--report-interval", "300",
+                "--stop-after-idle-s",
+                str(idle_s),
+                "--report-interval",
+                "300",
             ],
-            cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            cwd=REPO,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
         )
         for _ in range(consumers)
     ]

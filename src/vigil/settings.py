@@ -84,16 +84,14 @@ class PostgresSettings:
 
     @property
     def dsn(self) -> str:
-        return (
-            f"postgresql://{self.user}:{self.password}"
-            f"@{self.host}:{self.port}/{self.database}"
-        )
+        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}"
 
     def __repr__(self) -> str:  # keep the password out of tracebacks and logs
         return (
             f"PostgresSettings(host={self.host!r}, port={self.port}, "
             f"user={self.user!r}, password=<redacted>, database={self.database!r})"
         )
+
 
 @dataclass(frozen=True)
 class MqttSettings:

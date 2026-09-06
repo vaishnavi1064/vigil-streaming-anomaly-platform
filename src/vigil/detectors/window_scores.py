@@ -39,11 +39,7 @@ def parse_window_score(raw: bytes | str) -> DetectorScore | None:
             # from its own metrics instead. Recording a fabricated 0.0 here would quietly
             # corrupt the NFR-1 percentile report, so it stays absent.
             latency_ms=0.0,
-            detail={
-                k: d[k]
-                for k in ("points", "window_mean", "reference_mean")
-                if k in d
-            },
+            detail={k: d[k] for k in ("points", "window_mean", "reference_mean") if k in d},
         )
     except (ValueError, KeyError, TypeError):
         return None

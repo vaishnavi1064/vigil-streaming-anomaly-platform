@@ -411,9 +411,7 @@ class ReconciliationLedger:
         drift = self.total_drift
         verdict = "ZERO DRIFT" if drift == 0 and not self.unhealthy_channels else "DRIFT DETECTED"
         late = (
-            f" | late (window already closed) {self.late_readings:,}"
-            if self.late_readings
-            else ""
+            f" | late (window already closed) {self.late_readings:,}" if self.late_readings else ""
         )
         return (
             f"{verdict}: {self.total_readings:,} readings across {len(self.channels)} channels | "

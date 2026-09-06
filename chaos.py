@@ -118,12 +118,18 @@ class ChaosResult:
 def start_loadgen(rate: float, duration: float, channels: int, seed: int) -> subprocess.Popen:
     return subprocess.Popen(
         [
-            str(PYTHON), str(REPO / "loadgen.py"),
-            "--rate", str(rate),
-            "--duration", str(duration),
-            "--channels", str(channels),
-            "--seed", str(seed),
-            "--report-interval", "15",
+            str(PYTHON),
+            str(REPO / "loadgen.py"),
+            "--rate",
+            str(rate),
+            "--duration",
+            str(duration),
+            "--channels",
+            str(channels),
+            "--seed",
+            str(seed),
+            "--report-interval",
+            "15",
         ],
         cwd=REPO,
         stdout=subprocess.PIPE,
@@ -135,11 +141,14 @@ def start_loadgen(rate: float, duration: float, channels: int, seed: int) -> sub
 def start_detector(group: str) -> subprocess.Popen:
     return subprocess.Popen(
         [
-            str(PYTHON), str(REPO / "detector.py"),
+            str(PYTHON),
+            str(REPO / "detector.py"),
             "--from-beginning",
-            "--group", group,
+            "--group",
+            group,
             "--no-foundation-model",
-            "--report-interval", "20",
+            "--report-interval",
+            "20",
         ],
         cwd=REPO,
         stdout=subprocess.PIPE,

@@ -90,9 +90,7 @@ def audit_offsets(consumer: Consumer, bootstrap: str, topic: str, consumed: int)
         )
         low_total += low
         high_total += high
-    return OffsetAudit(
-        topic=topic, low_watermark=low_total, log_end=high_total, consumed=consumed
-    )
+    return OffsetAudit(topic=topic, low_watermark=low_total, log_end=high_total, consumed=consumed)
 
 
 class ReconciliationHarness:

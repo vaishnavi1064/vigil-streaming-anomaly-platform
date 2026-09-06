@@ -193,9 +193,7 @@ def test_lag_and_loss_are_graded_separately():
     # something. A conditioned detector should treat them differently.
     t = HealthThresholds()
     assert t.grade(missing=0, duplicates=0, regressions=0, max_lag_ms=10_000) is HealthSeverity.INFO
-    assert (
-        t.grade(missing=1, duplicates=0, regressions=0, max_lag_ms=0) is HealthSeverity.WARNING
-    )
+    assert t.grade(missing=1, duplicates=0, regressions=0, max_lag_ms=0) is HealthSeverity.WARNING
     assert (
         t.grade(missing=500, duplicates=0, regressions=0, max_lag_ms=0) is HealthSeverity.CRITICAL
     )
@@ -317,9 +315,7 @@ def test_switching_lag_grading_off_does_not_hide_actual_loss():
 
 def test_lag_is_still_recorded_even_when_it_is_not_graded():
     # The measurement stays honest; only the severity judgement changes.
-    led = ReconciliationLedger(
-        window_ms=10_000, thresholds=HealthThresholds(grade_lag=False)
-    )
+    led = ReconciliationLedger(window_ms=10_000, thresholds=HealthThresholds(grade_lag=False))
     led.observe(r("a", 1, ts_ms=1_000), ingest_wall_ms=3_601_000)
     health = led.close_all()[0]
     assert health.max_lag_ms == 3_600_000

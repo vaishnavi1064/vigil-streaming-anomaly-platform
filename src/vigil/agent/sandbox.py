@@ -128,9 +128,7 @@ class SandboxExecutor:
                 return self._read("describe_channel", channel=p["channel"]), ()
             case ActionKind.FETCH_RECENT_READINGS:
                 return (
-                    self._read(
-                        "recent_readings", channel=p["channel"], minutes=int(p["minutes"])
-                    ),
+                    self._read("recent_readings", channel=p["channel"], minutes=int(p["minutes"])),
                     (),
                 )
             case ActionKind.FETCH_PIPELINE_HEALTH:
@@ -221,9 +219,7 @@ def action_effects_are_reversible(result: ExecutionResult) -> bool:
     return result.action.risk is not RiskClass.READ_ONLY or not result.effects
 
 
-def trace_json(
-    decision: GateDecision, result: ExecutionResult | None, episode_id: int
-) -> str:
+def trace_json(decision: GateDecision, result: ExecutionResult | None, episode_id: int) -> str:
     """The auditable record of one step: what was proposed, judged, and done.
 
     The rationale is included here even though the gate never read it -- a human reviewing

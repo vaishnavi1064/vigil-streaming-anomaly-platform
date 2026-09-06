@@ -234,9 +234,7 @@ def main() -> None:
     )
 
     watermarks = (
-        WatermarkStrategy.for_bounded_out_of_orderness(
-            Duration.of_millis(args.out_of_orderness_ms)
-        )
+        WatermarkStrategy.for_bounded_out_of_orderness(Duration.of_millis(args.out_of_orderness_ms))
         .with_timestamp_assigner(ReadingTimestampAssigner())
         # A partition with no traffic must not hold the watermark back for every other
         # partition. Same failure the reconciliation harness hit; same fix.

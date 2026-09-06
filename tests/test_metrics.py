@@ -124,14 +124,6 @@ def test_a_series_with_nothing_detected_has_no_median_delay():
     assert result.median_detection_delay is None
 
 
-
-
-
-
-
-
-
-
 # ------------------------- alarm budget -------------------------
 
 

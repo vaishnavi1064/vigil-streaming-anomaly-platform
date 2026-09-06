@@ -200,9 +200,7 @@ class RunbookPlanner:
 
         match diagnosis.symptom:
             case Symptom.SAFETY_CHANNEL:
-                proposed = [
-                    a for a in proposed if a.kind is ActionKind.DESCRIBE_CHANNEL
-                ]
+                proposed = [a for a in proposed if a.kind is ActionKind.DESCRIBE_CHANNEL]
                 offer(
                     ActionKind.ESCALATE_TO_HUMAN,
                     "safety-related channel; no automated remediation is permitted",

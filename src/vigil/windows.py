@@ -53,9 +53,7 @@ class Window:
         return any(label is not None for label in self.injected)
 
     def __repr__(self) -> str:
-        return (
-            f"Window({self.channel} [{self.start_ms}, {self.end_ms}) n={self.count})"
-        )
+        return f"Window({self.channel} [{self.start_ms}, {self.end_ms}) n={self.count})"
 
 
 def window_starts(event_ts_ms: int, size_ms: int, slide_ms: int) -> Iterator[int]:

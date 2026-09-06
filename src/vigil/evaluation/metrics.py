@@ -94,7 +94,6 @@ def auc_pr(scores, labels) -> float:
     return float(np.sum((recall - recall_prev) * precision))
 
 
-
 def roc_auc(scores, labels) -> float:
     """Point-wise ROC-AUC. An input to the tolerant measure only; never reported alone,
     because at these base rates it is dominated by the negative class."""
@@ -114,7 +113,6 @@ def roc_auc(scores, labels) -> float:
     ranks = (tie_sums / counts)[inverse]
     positive_rank_sum = ranks[y == 1].sum()
     return float((positive_rank_sum - positives * (positives + 1) / 2) / (positives * negatives))
-
 
 
 def alarmed_mask(scores, budget: int) -> np.ndarray:
