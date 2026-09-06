@@ -71,6 +71,7 @@ services:
       READINGS_TOPIC: ${READINGS_TOPIC:?READINGS_TOPIC must be set in .env}
       READINGS_PARTITIONS: ${READINGS_PARTITIONS:?READINGS_PARTITIONS must be set in .env}
       CONTEXT_TOPIC: ${CONTEXT_TOPIC:?CONTEXT_TOPIC must be set in .env}
+      SCORES_TOPIC: ${SCORES_TOPIC:?SCORES_TOPIC must be set in .env}
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
@@ -83,6 +84,9 @@ services:
         # Context is low volume and every consumer needs all of it, so one partition:
         # partitioning it would buy nothing and cost total ordering of the markers.
         create "$$CONTEXT_TOPIC" 1
+        # Window scores from Flink. Same partition count as readings so a downstream
+        # consumer can scale to the same parallelism.
+        create "$$SCORES_TOPIC" "$$READINGS_PARTITIONS"
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list
     restart: "no"
 
@@ -117,6 +121,80 @@ services:
         limits:
           memory: 1g
 
+  # --- Flink, behind a profile ---------------------------------------------------------
+  # Not started by default: JobManager plus TaskManager want roughly 2.5 GB, and the Docker
+  # VM has 8.1 GB with Kafka and Postgres already in it. Bring it up deliberately:
+  #   docker compose --profile flink up -d --build
+  flink-jobmanager:
+    build:
+      context: ./flink
+    image: vigil/flink:1.20.1-py
+    container_name: vigil-flink-jm
+    profiles: ["flink"]
+    command: jobmanager
+    ports:
+      - "${FLINK_UI_PORT:-8081}:8081"
+    environment:
+      # The JobManager reads this to advertise itself; TaskManagers use it to find the JM.
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        jobmanager.memory.process.size: 1024m
+        state.backend.type: rocksdb
+        state.backend.incremental: true
+        execution.checkpointing.dir: file:///flink-checkpoints
+        execution.checkpointing.savepoint-dir: file:///flink-savepoints
+      KAFKA_BOOTSTRAP_INTERNAL: kafka:9092
+      READINGS_TOPIC: ${READINGS_TOPIC:?READINGS_TOPIC must be set in .env}
+      SCORES_TOPIC: ${SCORES_TOPIC:?SCORES_TOPIC must be set in .env}
+    volumes:
+      - ./flink:/opt/vigil:ro
+      - flink-checkpoints:/flink-checkpoints
+      - flink-savepoints:/flink-savepoints
+    depends_on:
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8081/overview >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1500m
+
+  flink-taskmanager:
+    build:
+      context: ./flink
+    image: vigil/flink:1.20.1-py
+    container_name: vigil-flink-tm
+    profiles: ["flink"]
+    command: taskmanager
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.memory.process.size: 2048m
+        taskmanager.numberOfTaskSlots: ${FLINK_TASK_SLOTS:-4}
+        state.backend.type: rocksdb
+        state.backend.incremental: true
+        execution.checkpointing.dir: file:///flink-checkpoints
+        execution.checkpointing.savepoint-dir: file:///flink-savepoints
+      KAFKA_BOOTSTRAP_INTERNAL: kafka:9092
+    volumes:
+      - ./flink:/opt/vigil:ro
+      - flink-checkpoints:/flink-checkpoints
+      - flink-savepoints:/flink-savepoints
+    depends_on:
+      flink-jobmanager:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          memory: 2500m
+
 volumes:
   kafka-data:
   postgres-data:
+  flink-checkpoints:
+  flink-savepoints:

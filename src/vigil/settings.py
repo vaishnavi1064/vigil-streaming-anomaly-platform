@@ -49,6 +49,7 @@ class KafkaSettings:
     readings_topic: str
     readings_partitions: int
     context_topic: str
+    scores_topic: str
 
     @classmethod
     def from_env(cls) -> KafkaSettings:
@@ -58,6 +59,7 @@ class KafkaSettings:
             readings_topic=required("READINGS_TOPIC"),
             readings_partitions=required_int("READINGS_PARTITIONS"),
             context_topic=required("CONTEXT_TOPIC"),
+            scores_topic=required("SCORES_TOPIC"),
         )
 
 

@@ -67,6 +67,13 @@ class ChaosResult:
     fault: str
     description: str
     injected: bool
+    # Whether the fault was *observed* to break anything. Injecting a fault that turns out
+    # to be a no-op and then reporting a pass is worse than reporting a failure: it is a
+    # green result that means nothing. Every scenario has to earn its verdict by showing
+    # the system was actually unserviceable at some point.
+    disruption_observed: bool
+    unhealthy_samples: int
+    hold_samples: int
     recovery_s: float | None
     recovered_within_budget: bool
     budget_s: float
@@ -84,13 +91,23 @@ class ChaosResult:
 
     @property
     def passed(self) -> bool:
-        return self.injected and self.consistent and self.recovered_within_budget
+        return (
+            self.injected
+            and self.disruption_observed
+            and self.consistent
+            and self.recovered_within_budget
+        )
 
     def line(self) -> str:
         verdict = "PASS" if self.passed else "FAIL"
         recovery = f"{self.recovery_s:.1f}s" if self.recovery_s is not None else "n/a"
+        broke = (
+            f"broke {self.unhealthy_samples}/{self.hold_samples}"
+            if self.hold_samples
+            else "broke ?"
+        )
         return (
-            f"[{verdict}] {self.fault:<20} recovery {recovery:>7} "
+            f"[{verdict}] {self.fault:<20} {broke:>14} | recovery {recovery:>7} "
             f"(budget {self.budget_s:g}s) | produced {self.produced:,} "
             f"consumed {self.consumed:,} | drift {self.drift:+,} "
             f"missing {self.missing:,} dupes {self.duplicates:,}"
@@ -218,13 +235,23 @@ def run_scenario(fault: Fault, args: argparse.Namespace) -> ChaosResult:
 
     load = start_loadgen(args.rate, args.duration, args.channels, seed=stamp)
     detector = None
+    detector_group = f"vigil-chaos-{stamp}"
     if args.with_detector:
-        detector = start_detector(f"vigil-chaos-{stamp}")
+        detector = start_detector(detector_group)
     if isinstance(fault, ConsumerKill):
         fault.process = detector
+        fault.bootstrap = bootstrap
+        fault.group = detector_group
+        fault.topic = topic
+        # Restart through the same launcher and the same group, so the restarted consumer
+        # resumes from the committed offsets rather than starting clean -- which is the
+        # whole point of the test.
+        fault.restart = lambda: start_detector(detector_group)
 
     recovery_s: float | None = None
     injected = False
+    hold_samples = 0
+    unhealthy_samples = 0
     try:
         print(f"settling for {args.settle_s:g}s before injecting...", flush=True)
         time.sleep(args.settle_s)
@@ -232,7 +259,28 @@ def run_scenario(fault: Fault, args: argparse.Namespace) -> ChaosResult:
         fault.inject()
         injected = True
         print(f"fault injected; holding for {args.hold_s:g}s", flush=True)
-        time.sleep(args.hold_s)
+
+        # Sample serviceability throughout the hold. This is the evidence that the fault
+        # was real: if the broker never once failed to answer, nothing was broken and the
+        # scenario proves nothing, however clean the drift figure looks afterwards.
+        hold_deadline = time.perf_counter() + args.hold_s
+        while time.perf_counter() < hold_deadline:
+            hold_samples += 1
+            if not fault.healthy():
+                unhealthy_samples += 1
+            time.sleep(1.0)
+
+        if unhealthy_samples == 0:
+            notes.append(
+                "the system stayed serviceable for the whole hold: this fault did not "
+                "disrupt anything, so its result proves nothing"
+            )
+            print("WARNING: no disruption observed during the hold", flush=True)
+        else:
+            print(
+                f"unserviceable for {unhealthy_samples}/{hold_samples} samples during the hold",
+                flush=True,
+            )
 
         fault.heal()
         started = time.perf_counter()
@@ -262,12 +310,13 @@ def run_scenario(fault: Fault, args: argparse.Namespace) -> ChaosResult:
             out, _ = load.communicate()
             notes.append("load generator had to be killed")
 
-        if detector is not None and detector.poll() is None:
-            detector.terminate()
-            try:
-                detector.communicate(timeout=30)
-            except subprocess.TimeoutExpired:
-                detector.kill()
+        for proc in (detector, getattr(fault, "_restarted", None)):
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.communicate(timeout=30)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
 
     produced, delivered = parse_loadgen_output(out)
     if produced and delivered < produced:
@@ -291,6 +340,9 @@ def run_scenario(fault: Fault, args: argparse.Namespace) -> ChaosResult:
         fault=fault.name,
         description=fault.description,
         injected=injected,
+        disruption_observed=unhealthy_samples > 0,
+        unhealthy_samples=unhealthy_samples,
+        hold_samples=hold_samples,
         recovery_s=recovery_s,
         recovered_within_budget=recovery_s is not None,
         budget_s=args.budget_s,

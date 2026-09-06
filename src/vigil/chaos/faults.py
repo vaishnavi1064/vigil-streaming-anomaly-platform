@@ -202,6 +202,19 @@ class NetworkPartition(Fault):
         self._disconnected = False
 
     def healthy(self) -> bool:
+        # Check the network attachment directly as well as the client path. A published
+        # port can keep answering the TCP handshake from Docker's proxy after the container
+        # leaves the network, so trusting the client alone reported "healthy" throughout a
+        # partition that had in fact been applied.
+        try:
+            networks = docker(
+                "inspect", "-f", "{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}",
+                self.container,
+            )
+            if self.network not in networks.split():
+                return False
+        except FaultError:
+            return False
         try:
             from confluent_kafka.admin import AdminClient
 
@@ -211,21 +224,65 @@ class NetworkPartition(Fault):
             return False
 
 
+def consumer_group_lag(bootstrap: str, group: str, topic: str, timeout: float = 10.0) -> int | None:
+    """Total unread records for a consumer group. None if it cannot be determined.
+
+    This is what makes consumer recovery measurable. "The process is running again" says
+    nothing; "the group has caught back up to the log end" is the property that matters.
+    """
+    try:
+        from confluent_kafka import Consumer, TopicPartition
+        from confluent_kafka.admin import AdminClient
+
+        admin = AdminClient({"bootstrap.servers": bootstrap})
+        metadata = admin.list_topics(topic=topic, timeout=timeout)
+        partitions = [TopicPartition(topic, p) for p in metadata.topics[topic].partitions]
+
+        probe = Consumer(
+            {"bootstrap.servers": bootstrap, "group.id": group, "enable.auto.commit": False}
+        )
+        try:
+            committed = probe.committed(partitions, timeout=timeout)
+            total = 0
+            for tp in committed:
+                _low, high = probe.get_watermark_offsets(tp, timeout=timeout, cached=False)
+                # An unset offset means the group never committed for that partition, so
+                # everything in it is still outstanding.
+                position = tp.offset if tp.offset >= 0 else 0
+                total += max(0, high - position)
+            return total
+        finally:
+            probe.close()
+    except Exception:  # noqa: BLE001 - unknown lag is reported as unknown, not as zero
+        return None
+
+
 @dataclass
 class ConsumerKill(Fault):
-    """Kill the detector mid-window.
+    """Kill the detector mid-window, then restart it and wait for it to catch back up.
 
     The one fault that tests our own recovery rather than Kafka's. It lands while windows
     are open and episodes are half-built, so it exercises the exact claim in
     docs/CORRECTNESS.md: offsets commit only after episodes are durable, and the sink
-    upserts, so a replay re-derives the same episodes instead of duplicating them.
+    upserts on (channel, t_start_ms, raised_by), so a replay re-derives the same episodes
+    instead of duplicating them.
+
+    Recovery is **consumer-group lag returning to near zero**, not "a process is running".
+    A restarted consumer that never catches up has not recovered, and a check that only
+    looked at liveness would happily report that it had.
     """
 
     process: object | None = None
+    restart: object | None = None
+    bootstrap: str = "localhost:19092"
+    group: str = ""
+    topic: str = ""
+    caught_up_within: int = 2_000
 
     def __post_init__(self) -> None:
         self.name = "consumer-kill"
-        self.description = "SIGKILL the detector process mid-window"
+        self.description = "SIGKILL the detector mid-window, restart it, wait for it to catch up"
+        self._restarted = None
 
     def inject(self) -> None:
         if self.process is None:
@@ -235,12 +292,29 @@ class ConsumerKill(Fault):
         self.process.kill()
 
     def heal(self) -> None:
-        # Restarting is the caller's job: it owns how the consumer is launched, and a fault
-        # that silently respawned processes would make the recovery timing meaningless.
-        return None
+        # Restart through the caller-supplied factory. The fault does not know how the
+        # consumer is launched, and hard-coding that here would couple it to one runner.
+        if self.restart is None or self._restarted is not None:
+            return
+        self._restarted = self.restart()
 
     def healthy(self) -> bool:
-        return self.process is None or self.process.poll() is not None
+        if self._restarted is None:
+            # Before heal: healthy means the original consumer is still alive and keeping
+            # up. Once killed, it is not, which is the disruption the suite needs to see.
+            if self.process is None or self.process.poll() is not None:
+                return False
+            lag = self._lag()
+            return lag is None or lag <= self.caught_up_within
+        if self._restarted.poll() is not None:
+            return False
+        lag = self._lag()
+        return lag is not None and lag <= self.caught_up_within
+
+    def _lag(self) -> int | None:
+        if not self.group or not self.topic:
+            return None
+        return consumer_group_lag(self.bootstrap, self.group, self.topic)
 
 
 ALL_FAULTS = {

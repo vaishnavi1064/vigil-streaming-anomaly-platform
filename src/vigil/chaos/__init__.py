@@ -12,6 +12,7 @@ from vigil.chaos.faults import (
     Fault,
     FaultError,
     NetworkPartition,
+    consumer_group_lag,
     wait_until,
 )
 
@@ -23,5 +24,6 @@ __all__ = [
     "Fault",
     "FaultError",
     "NetworkPartition",
+    "consumer_group_lag",
     "wait_until",
 ]

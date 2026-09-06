@@ -93,17 +93,63 @@ def test_a_consumer_kill_actually_kills_the_process():
     fault = ConsumerKill(process=process)
     fault.inject()
     assert process.killed
-    assert fault.healthy()
+    # A dead consumer is precisely the disruption the suite needs to observe, so healthy()
+    # must report False here. Reporting True would let the scenario claim a pass without
+    # anything having broken.
+    assert fault.healthy() is False
 
 
-def test_consumer_kill_does_not_secretly_respawn_on_heal():
-    # Restarting is the caller's job. A fault that quietly respawned processes would make
-    # the measured recovery time meaningless.
+def test_consumer_kill_without_a_restart_factory_does_not_respawn():
+    # The fault does not know how the consumer is launched; hard-coding that would couple it
+    # to one runner.
     process = FakeProcess()
     fault = ConsumerKill(process=process)
     fault.inject()
     fault.heal()
     assert process.poll() is not None
+
+
+def test_healing_restarts_the_consumer_through_the_supplied_factory():
+    process = FakeProcess()
+    restarted = FakeProcess()
+    fault = ConsumerKill(process=process, restart=lambda: restarted)
+    fault.inject()
+    fault.heal()
+    assert fault._restarted is restarted
+
+
+def test_healing_twice_does_not_start_a_second_consumer():
+    # heal() runs both explicitly and again in the cleanup finally block.
+    starts = {"n": 0}
+
+    def factory():
+        starts["n"] += 1
+        return FakeProcess()
+
+    fault = ConsumerKill(process=FakeProcess(), restart=factory)
+    fault.inject()
+    fault.heal()
+    fault.heal()
+    assert starts["n"] == 1
+
+
+def test_a_restarted_consumer_that_dies_again_is_not_healthy():
+    dead = FakeProcess(alive=False)
+    fault = ConsumerKill(process=FakeProcess(), restart=lambda: dead)
+    fault.inject()
+    fault.heal()
+    assert fault.healthy() is False
+
+
+def test_recovery_means_caught_up_not_merely_running():
+    # A restarted consumer that never catches up has not recovered, and a liveness-only
+    # check would happily report that it had. With no group or topic configured the lag is
+    # unknown, and unknown must not be treated as zero.
+    fault = ConsumerKill(process=FakeProcess(), restart=FakeProcess)
+    fault.inject()
+    fault.heal()
+    assert fault.group == ""
+    assert fault.healthy() is False
 
 
 def test_healing_a_network_partition_that_was_never_injected_does_nothing():
