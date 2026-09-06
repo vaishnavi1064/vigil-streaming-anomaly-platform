@@ -1,0 +1,72 @@
+{
+  "partitions": 6,
+  "backlog_readings": 3928127,
+  "points": [
+    {
+      "consumers": 1,
+      "partitions": 6,
+      "readings": 3928127,
+      "elapsed_s": 41.57,
+      "throughput_per_s": 94495.3,
+      "per_consumer_per_s": 94495.3,
+      "idle_consumers": 0,
+      "speedup_vs_one": 1.0,
+      "efficiency": 1.0
+    },
+    {
+      "consumers": 2,
+      "partitions": 6,
+      "readings": 3930227,
+      "elapsed_s": 31.61,
+      "throughput_per_s": 124333.8,
+      "per_consumer_per_s": 62166.9,
+      "idle_consumers": 0,
+      "speedup_vs_one": 1.316,
+      "efficiency": 0.658
+    },
+    {
+      "consumers": 3,
+      "partitions": 6,
+      "readings": 3929587,
+      "elapsed_s": 23.42,
+      "throughput_per_s": 167775.2,
+      "per_consumer_per_s": 55925.1,
+      "idle_consumers": 0,
+      "speedup_vs_one": 1.775,
+      "efficiency": 0.592
+    },
+    {
+      "consumers": 4,
+      "partitions": 6,
+      "readings": 3928936,
+      "elapsed_s": 24.58,
+      "throughput_per_s": 159827.4,
+      "per_consumer_per_s": 39956.8,
+      "idle_consumers": 0,
+      "speedup_vs_one": 1.691,
+      "efficiency": 0.423
+    },
+    {
+      "consumers": 6,
+      "partitions": 6,
+      "readings": 3928829,
+      "elapsed_s": 23.05,
+      "throughput_per_s": 170413.9,
+      "per_consumer_per_s": 28402.3,
+      "idle_consumers": 0,
+      "speedup_vs_one": 1.803,
+      "efficiency": 0.301
+    },
+    {
+      "consumers": 8,
+      "partitions": 6,
+      "readings": 3928430,
+      "elapsed_s": 23.09,
+      "throughput_per_s": 170125.5,
+      "per_consumer_per_s": 21265.7,
+      "idle_consumers": 2,
+      "speedup_vs_one": 1.8,
+      "efficiency": 0.225
+    }
+  ]
+}

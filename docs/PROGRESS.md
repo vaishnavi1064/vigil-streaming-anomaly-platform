@@ -18,8 +18,8 @@ Phases are from `BUILD.md` section 7; stories from `docs/USER_STORIES.md`.
 |---|---|---|---|
 | 0 | Requirements and design | Plan reviewed, repo scaffolded | **Done** |
 | 1 | Thin spine: loadgen -> Kafka -> consumer -> windows -> z-score -> episodes in Postgres, then the foundation-model detector, minimal dashboard | Runs end to end from documented commands; an anomaly appears; foundation model runs alongside the baseline; tests pass | **Done** - gate passed 2026-09-05, see section 6 |
-| 2 | Correctness and resilience: Flink, event-time, 2PC exactly-once, reconciliation harness, chaos suite, scale harness | Zero reconciliation drift over a long run; >=3 faults recover with bounded lag; throughput-vs-parallelism curve | **Mostly done.** Drift 0 (over 15 min, not the 4 h NFR-6 asks); 4/4 faults recovered with proven disruption; Flink running with bit-identical parity. Scale sweep not yet run |
-| 3 | The core contribution: context-conditioned detection + ClickHouse + Iceberg | Measured false-positive reduction vs. the unconditioned baseline; fail-open verified | **In progress.** Policy built and measured twice; v1 failed NFR-8 honestly, v2 re-measuring. ClickHouse/Iceberg not started |
+| 2 | Correctness and resilience: Flink, event-time, 2PC exactly-once, reconciliation harness, chaos suite, scale harness | Zero reconciliation drift over a long run; >=3 faults recover with bounded lag; throughput-vs-parallelism curve | **Gate met on two of three clauses.** 4/4 faults recovered with proven disruption; curve produced and the plateau named (`docs/SCALE.md`). Drift 0 but over 15 min, not the 4 h NFR-6 asks. Flink runs with bit-identical parity, never fault-tested (G-1) |
+| 3 | The core contribution: context-conditioned detection + ClickHouse + Iceberg | Measured false-positive reduction vs. the unconditioned baseline; fail-open verified | **Measured twice, NFR-8 missed twice.** v1 over-suppressed (+60.9% FP, -36.7% recall); v2 barely suppresses (+9.0% FP, -10.0% recall) and its diagnosis shows the synchrony test was invalid -- see B-4. Fail-open pass now built into the harness, not yet run. ClickHouse/Iceberg not started |
 | 4 | Explanation and agent (thin) | Flagged anomaly explained; propose -> gate -> sandbox execute; trace persisted | **Mostly done.** Closed action set, deterministic gate, sandbox, runbook RAG, full loop -- 98 tests. VLM explanation not started |
 | 5 | Evaluation and CI | Honest benchmark incl. losses; DeepEval gate fails the build on regression | **In progress.** Metrics + TSB-AD benchmark harness built; GitHub Actions CI written. Full benchmark run and DeepEval gate not done |
 | 6 | Production wrapper and polish | One-command bring-up; README + diagram + demo | Not started |
@@ -29,18 +29,18 @@ Phases are from `BUILD.md` section 7; stories from `docs/USER_STORIES.md`.
 | Story | Title | Status |
 |---|---|---|
 | A1 | Durable ingestion (gap-detect + backfill) | **Done, scope corrected** - live MQTT source + gap detection. Backfill is impossible on this feed; edge guarantee restated as at-most-once (ADR-011) |
-| A2 | Exactly-once processing (Flink, 2PC) | **Written, not yet run** - PyFlink job with event-time watermarks, RocksDB, incremental + unaligned checkpoints, transactional Kafka sink. 14 parity tests prove it computes what the Python detector computes. Image built; job not yet submitted |
+| A2 | Exactly-once processing (Flink, 2PC) | **Running, parity proven, never fault-tested** - PyFlink job with event-time watermarks, RocksDB, incremental + unaligned checkpoints, transactional Kafka sink. Submitted and verified: 1,056 windows scored, differences of exactly 0.0000 against the Python detector, 30 checkpoints at an average 283 ms. Nothing has yet killed it mid-checkpoint (gap G-1) |
 | B1 | Reconciliation harness | **Done** - per-channel sequence identity + independent broker-offset audit. Measured drift 0 over 252,000 readings. 42 tests |
 | B2 | Pipeline-health signal | **Done** - per-window `PipelineHealth` on `ops.context` as `kind=pipeline`, same wire and schema as a deploy marker (ADR-003). Emitted for clean windows too, so 'clean' is distinguishable from 'no signal' |
 | C1 | Z-score baseline detector | **Done** - Welford, decayed reference, mean + dispersion, 18 tests |
 | C2 | Foundation-model detector | **Done** - Chronos-Bolt-tiny zero-shot, batched off the critical path, 16 tests |
 | D1 | Reconciliation-gated detection | **Done and measured** - the mechanism check works: 40 episodes overlapping a lossless pipeline event were correctly raised as `implausible`, not attributed |
-| D2 | Deploy-marker conditioning | **Measured twice.** v1 (co-occurrence) failed NFR-8: -100% recall in quiet windows. v2 (synchrony) re-measuring |
+| D2 | Deploy-marker conditioning | **Measured twice, both published, both missed NFR-8.** v1 (co-occurrence) suppressed everything in quiet windows; v2 (synchrony) attributed almost nothing -- and the diagnosis is that episode start times are quantised to the 10 s window slide, so a 5 s tolerance could only ever match an exact tie. The hypothesis is untested rather than refuted (B-4) |
 | D3 | Pluggable conditioning interface | **Done** - `ContextSignalSource` with static/Kafka/composite implementations; pipeline and deploy signals share one wire, one schema, one interface |
 | E1 | Explained anomaly (VLM, flagged windows only) | Not started - see BLOCKERS C-1/C-2 (4 GB VRAM, no API key) |
 | F1 | Safety-gated remediation | **Done** - closed action set, deterministic gate that never reads the rationale, sandbox with a structural interlock, BM25 runbook grounding. 98 tests |
 | G1 | Live dashboard | **Partial** - episodes, per-detector comparison, latency vs. budget. Reconciliation panel absent until Phase 2, and the page says why |
-| H1 | Throughput harness | **Partial** - loadgen measures producer-side throughput (76,556 ev/s blast). Consumer-side and the parallelism curve are Phase 2 |
+| H1 | Throughput harness | **Done** - producer 76,556 ev/s blast; consumer-side curve measured over a 3.9 M backlog: 94,495/s at one consumer, plateau **170,414/s at 3-6 consumers** over 6 partitions. NFR-4 met (20,000 target); NFR-5's near-linear claim **not** met, 1.80x at 6 consumers. `docs/SCALE.md` |
 | H2 | Chaos suite | **Done** - 4 fault modes, all broke 20/20 serviceability samples, all recovered within the 60s budget, drift 0 verified by independent replay. `docs/CHAOS.md`. 18 unit tests |
 | I1 | Honest detection benchmark | **Harness built**, smoke-run on 6 series. Full 200-series run not yet done |
 | I2 | CI quality gate | **Partial** - GitHub Actions runs lint, format, unit, integration, a secret scan and repo-standards checks (no emoji, ADRs numbered and carrying alternatives). DeepEval gate not added |
@@ -54,6 +54,11 @@ Phases are from `BUILD.md` section 7; stories from `docs/USER_STORIES.md`.
 | 2026-09-05 | `67630bb` | **Phase 1 gate passed.** Wrote `docs/CORRECTNESS.md` (guarantee per boundary + what is not covered), filled `docs/EVALUATION.md` sections 5.1a-5.1d with measured numbers, wrote `README.md`. |
 | 2026-09-05 | `4e55212` | **Phase 2 started.** Reconciliation harness: per-channel sequence identity, independent broker-offset audit, per-window health signal on the context topic. Chaos suite: 4 fault modes with recovery verified by independent replay. Scale harness: parallelism sweep over a fixed pre-filled backlog. |
 | 2026-09-06 | `f011835` | **Chaos verified** (4/4, disruption proven), `docs/CHAOS.md`, the paired evaluation harness (`evaluate.py`), and conditioning wired into the detector behind `--conditioning`. |
+| 2026-09-06 | (this commit) | **Scale sweep run and `docs/SCALE.md` written.** Plateau 170,414 readings/s at 3-6 consumers over 6 partitions; NFR-4 met, NFR-5's near-linear claim not met at 1.80x. Multi-consumer drains read up to 2,100 records *more* than were produced -- rebalance re-delivery, a measured statement of why this path is at-least-once. |
+| 2026-09-06 | `95aa6d4` | **v2 measured and published: NFR-8 missed again (+9.0% FP reduction, -10.0% recall), and the test itself was invalid.** Episode start times are the start of the window that flagged them, and windows slide by 10 s, so a 5 s synchrony tolerance could only ever match an exact tie. Ground truth for the same run puts consecutive in-scope artifact onsets a median 1.8 s apart. Recorded as B-4. |
+| 2026-09-06 | `1c3a330` | Fail-open is now a third pass in the paired harness rather than an argument: conditioning on, context topic empty, required to reproduce the unconditioned pass episode for episode. |
+| 2026-09-06 | `62eee9e`, `25a409b` | Tool-calling training set committed with tests. Its abstention population was empty as first written and is now constructed deliberately. Counting distinct targets over 1,200 examples gives five, which reopens the fine-tune question as B-3. |
+| 2026-09-06 | `0c43105` | The agent no longer falls silent: a planner that proposes nothing, or retrieval that licenses nothing applicable, now produces a gated escalation instead of an empty run. |
 | 2026-09-06 | `8fe97e3` | **Phase 3 measured, twice.** v1 conditioning failed NFR-8 honestly (+60.9% FP reduction, -36.7% recall, -100% in quiet windows); diagnosed as corroboration-by-coincidence; refined to require synchrony; re-measuring. Published both. ADR-024..029. |
 | 2026-09-06 | `e9647ef`, `7b42f18`, `1502832` | **Phase 4 agent.** Closed typed action set, deterministic safety gate that never reads the rationale, sandbox with a structural interlock, BM25 runbook retrieval with per-passage action licences, full Diagnoser -> Planner -> Gate -> Executor loop. 98 tests. |
 | 2026-09-06 | `32479f7`, `b714efb` | Flink job submitted and verified: 1,056 windows scored, differences of exactly 0.0000 against the Python detector. Flink checkpoint-recovery chaos scenario added. |
@@ -148,24 +153,24 @@ ADRs live in `docs/DECISIONS.md`. Design-phase ADR-001..008 predate this build.
 
 ## 5. Next up
 
-**In flight:** the v2 paired measurement (`evaluate.py`, synchrony-based corroboration) on
-the same scenario, density and seed as v1. Whatever it says goes into
-`docs/EVALUATION.md` section 3.4 next to v1.
+**Waiting on the architect:** B-4 -- both conditioning measurements asked a coincidence
+question rather than the intended synchrony question, because episode start times are
+quantised to the window slide. Stop and publish the negative result, or fix the episode
+record and measure a third time. Also B-3, whether the tool-calling fine-tune is worth the
+rented GPU now that the training set is measured to have five distinct targets.
+
+**In flight:** nothing.
 
 **Then, in rough priority order:**
 
-1. If v2 still misses NFR-8, report that and stop refining -- two honest attempts with a
-   diagnosis each is a better result than a number reached by tuning.
-2. Sensitivity run at a realistic deploy density, labelled as a separate row rather than a
-   replacement for the hard case.
-3. Scale sweep (`python scale.py --fill 300000 --parallelism 1,2,3,4,6,8`) and
-   `docs/SCALE.md`. Needs an otherwise idle machine.
-4. Full 200-series TSB-AD benchmark with the foundation model, and the honest
+1. Fail-open verification end to end (`evaluate.py` now runs it as a third pass, ADR-007);
+   pair it with the sensitivity run at a realistic deploy density so one run answers both.
+2. Full 200-series TSB-AD benchmark with the foundation model, and the honest
    where-it-loses table.
-5. Flink checkpoint-recovery chaos run (`chaos.py --fault flink-taskmanager-kill`, needs the
+3. Flink checkpoint-recovery chaos run (`chaos.py --fault flink-taskmanager-kill`, needs the
    flink profile up) -- this is the scenario that actually exercises two-phase commit.
-6. Multi-hour soak for NFR-6. Must run after chaos and scale.
-7. VLM explanation (blocked on C-1/C-2), ClickHouse and Iceberg, Terraform and K8s.
+4. Multi-hour soak for NFR-6. Must run after chaos and scale.
+5. VLM explanation (blocked on C-2, needs a key), ClickHouse and Iceberg, Terraform and K8s.
 
 ## 6. Phase 1 gate evidence
 

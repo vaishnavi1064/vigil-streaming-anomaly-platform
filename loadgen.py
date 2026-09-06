@@ -82,6 +82,11 @@ def run(args: argparse.Namespace) -> int:
         with source:
             for reading in source.readings():
                 publisher.publish(reading)
+                if args.max_readings and publisher.counters.produced >= args.max_readings:
+                    # Blast mode is unpaced, so a duration cannot express "this many
+                    # readings". The scale harness needs a fixed backlog, not a fixed
+                    # interval, or each sweep point drains a different amount of data.
+                    break
                 if source.plan is not None:
                     stream_t_s = (reading.event_ts_ms - source.t0_wall_ms) / 1000.0
                     for event in source.due_context_events(stream_t_s):
@@ -197,6 +202,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="target events/s across all channels; 0 means blast mode (unpaced)",
     )
     p.add_argument("--duration", type=float, default=60, help="seconds to run; 0 runs until Ctrl-C")
+    p.add_argument(
+        "--max-readings",
+        type=int,
+        default=0,
+        help="stop after this many readings; 0 means no limit. The only way to bound a "
+        "blast-mode run by volume rather than by time",
+    )
     p.add_argument("--channels", type=int, default=8, help="number of synthetic channels")
     p.add_argument(
         "--seed", type=int, default=1729, help="RNG seed; identical seeds replay identically"

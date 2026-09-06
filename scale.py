@@ -64,7 +64,12 @@ class SweepPoint:
 
 
 def fill_topic(bootstrap: str, count: int, rate: float, channels: int) -> int:
-    """Produce a fixed backlog, unpaced, and return how many records landed."""
+    """Produce a fixed backlog, unpaced, and return how many records landed.
+
+    Bounded by volume rather than by time. Blast mode has no rate to divide by, and an
+    earlier version fell back to a 30-second run there -- which filled 3.9 million readings
+    for a `--fill 300000` sweep and quietly measured something other than what was asked for.
+    """
     duration = count / rate if rate > 0 else 0
     print(f"filling the topic with ~{count:,} readings...", flush=True)
     proc = subprocess.run(
@@ -74,7 +79,9 @@ def fill_topic(bootstrap: str, count: int, rate: float, channels: int) -> int:
             "--rate",
             str(rate),
             "--duration",
-            str(duration if duration else 30),
+            str(duration if duration else 0),
+            "--max-readings",
+            str(count),
             "--channels",
             str(channels),
             "--report-interval",
