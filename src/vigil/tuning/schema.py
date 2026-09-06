@@ -9,15 +9,24 @@ Why this framing rather than a chat format: the agent's failure modes are struct
 stylistic. A planner that emits prose has to be parsed; a planner that emits an unknown verb
 has to be rejected; a planner that proposes an action no runbook licenses is ungrounded.
 Making the target a strict JSON list means every one of those is measurable as a rate rather
-than as an impression, and the eval in `evaluate_planner.py` reports exactly those rates.
+than as an impression. The harness that would report those rates is not written: it is
+only worth building once B-3 in `docs/BLOCKERS.md` settles whether the fine-tune happens
+at all, since the deterministic planner scores perfectly on this set by construction.
 
-**The honest framing of what fine-tuning buys.** The training targets come largely from the
-deterministic planner, so this is in substantial part **distillation of a rule set into a
-model**. That is a real technique with a real payoff -- the model should generalise to
-phrasings, channel names and symptom descriptions the rules were never written for -- but it
-would be dishonest to present it as the model discovering policy. The eval measures whether
-it actually generalises, by holding out symptom/channel combinations the rules handle only
-by falling through to escalation. If it does not beat the rules there, that is the finding.
+**The honest framing of what fine-tuning buys, now that it has been measured.** The
+training targets come from the deterministic planner, so this is distillation of a rule set
+into a model. The hope was that it would still generalise to phrasings, channel names and
+symptom vocabularies the rules were never written for. Counting distinct target sequences
+over 1,200 curated examples says otherwise: there are **five**, and each is a deterministic
+function of the diagnosed symptom -- which `Diagnoser` computes before the prompt is
+rendered and which therefore appears *in the prompt*. A model trained on this is learning a
+five-way classification whose answer is one of its own inputs. It can approach the rules and
+it cannot beat them.
+
+That is recorded as B-3 in `docs/BLOCKERS.md` with the options, because whether to spend
+rented GPU time on a distillation with that ceiling is the architect's call, not this
+module's. The schema and the curation stand either way: they are what makes the ceiling
+visible instead of assumed.
 """
 
 from __future__ import annotations
