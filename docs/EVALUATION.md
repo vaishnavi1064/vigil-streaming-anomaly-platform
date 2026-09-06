@@ -100,23 +100,81 @@ Both halves must hold (NFR-8 / ADR-016):
 
 ### 3.4 Results
 
-**Not yet measured.** The conditioning policy lands in Phase 3; the generator, the context
-topic and the ground-truth plan are in place as of Phase 1. This table is the shape the result
-will take, and it will be filled from a recorded command:
+Run:
 
-| Measure | Unconditioned (shadow) | Conditioned | Delta |
+```
+python evaluate.py --duration 900 --rate 400 --channels 12 \
+    --deploys-per-hour 60 --faults-per-hour 120
+```
+
+360,000 readings over 15 minutes on 12 channels. Ground truth, fixed before either pass ran:
+**30 real faults** (13 inside context windows, 17 outside, 3 inside *quiet* windows),
+**56 injected artifacts**, **14 deploy windows**. Both passes replayed the identical topic
+and recorded the identical 79 episodes; only the conditioning decision differed.
+
+#### v1 -- corroboration by co-occurrence. FAILED.
+
+| Measure | Shadow | Conditioned | Delta |
 |---|---|---|---|
-| False positives during perturbing-deploy windows | — | — | — |
-| False positives during quiet-deploy windows | — | — | — |
-| Recall, faults **outside** context windows | — | — | — |
-| Recall, faults **inside** context windows | — | — | — |
-| Recall, faults inside **quiet** deploy windows | — | — | — |
-| Precision (incident-level) | — | — | — |
-| Range-tolerant AUC-PR | — | — | — |
+| Pages raised | 79 | 40 | -39 |
+| False pages (artifact + unexplained) | 64 | 25 | **-39** |
+| of which artifact-driven | 42 | 7 | -35 |
+| Recall, all real faults | 83.3% (25/30) | 46.7% (14/30) | **-36.7%** |
+| Recall, faults **outside** windows | 70.6% (12/17) | 64.7% (11/17) | -5.9% |
+| Recall, faults **inside** windows | 100.0% (13/13) | 23.1% (3/13) | **-76.9%** |
+| Recall, faults in **quiet** windows | 100.0% (3/3) | 0.0% (0/3) | **-100.0%** |
+| Precision (incident-level) | 19.0% | 37.5% | +18.5% |
 
-The quiet-deploy and inside-window rows are the ones that fail loudly under blanket suppression.
+**false-positive reduction +60.9% (target >= 40%, met) -- recall loss +36.7% (tolerance
+<= 5%, missed). NFR-8 NOT MET.**
 
----
+The quiet-window row is the whole finding. During a quiet deploy there is no artifact at
+all, so there is nothing for a correct policy to attribute anything *to* -- and this one
+attributed every real fault there. That population exists precisely to catch blanket
+suppression (ADR-015), and it caught ours.
+
+The verdict breakdown says why: `corroborated=39, implausible=40, isolated=0`. The
+corroboration test **never once** concluded a channel had moved alone. Asking "were this
+channel's in-scope siblings also flagged in this window" is not discriminating at this
+density: with 56 artifacts and 30 faults across 12 channels, and 14 deploys whose windows
+overlap to cover nearly the whole run, two in-scope channels are flagged in almost any
+30-second bucket by coincidence.
+
+The pipeline half of the policy worked. Forty episodes overlapping a pipeline event that
+had lost nothing were raised as `implausible` rather than attributed -- the mechanism check
+doing its job.
+
+Raw result: `docs/results/paired-evaluation-v1-corroboration-only.json`.
+
+#### v2 -- corroboration requires synchrony
+
+The diagnosis pointed at a physical distinction rather than a threshold to tune. A deploy
+artifact hits the channels it touched **at the same instant** -- a collector restart blips
+them together. Two independent faults landing in the same 30-second bucket are not
+synchronised to the second. So corroboration now asks whether in-scope siblings *started*
+within a tolerance far tighter than a window (default 5 s), and the index records episode
+start times rather than window buckets.
+
+Re-measured on the **same scenario at the same density and the same seed**, so the only
+variable is the policy.
+
+**Not yet measured at the time of writing.** The result will be recorded here whatever it
+says, next to v1 -- publishing only the second number would be tuning until it passes.
+
+#### What this measurement does not establish
+
+- **The deploy density is unrealistically high.** Fourteen deploys with 60-180 s durations
+  over a 900 s run overlap enough to cover nearly the whole window. Real fleets do not
+  deploy continuously. That makes this a *hard* case rather than a representative one, and
+  it is kept because a policy that survives it is more interesting than one tuned for a
+  quiet afternoon. A sensitivity run at a lower rate is a separate row, not a replacement.
+- **Conditioning is applied as episodes close, so the corroboration index only holds
+  episodes that closed earlier.** An episode closing early therefore sees fewer potential
+  siblings than one closing late. The asymmetry is real; a batch pass over completed windows
+  would remove it, at the cost of latency.
+- **The shadow baseline's own recall is 83.3%, not 100%.** Five real faults were never
+  detected by the z-score detector at all, conditioning or no conditioning. That is a
+  detector limitation and it caps what any conditioning policy can preserve.
 
 ## 4. Q2 — detector vs. baseline on TSB-AD-M
 
