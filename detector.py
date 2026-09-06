@@ -29,10 +29,12 @@ from collections import Counter
 
 from confluent_kafka import Consumer, KafkaError, TopicPartition
 
+from vigil.conditioning.policy import ConditioningPolicy, ConditioningThresholds
+from vigil.conditioning.signals import KafkaContextSource
 from vigil.detectors.foundation import ChronosResidualDetector, FoundationModelUnavailable
 from vigil.detectors.offpath import OffPathScorer
 from vigil.detectors.zscore import RollingZScoreDetector
-from vigil.episodes import EpisodeBuilder
+from vigil.episodes import EpisodeBuilder, EpisodeStatus
 from vigil.readings import Reading
 from vigil.settings import KafkaSettings, PostgresSettings
 from vigil.store import EpisodeStore
@@ -58,6 +60,7 @@ class DetectionSpine:
         foundation: ChronosResidualDetector | None = None,
         foundation_threshold: float = 6.0,
         foundation_batch: int = 32,
+        conditioning: ConditioningPolicy | None = None,
     ) -> None:
         self.store = store
         self.windows = SlidingWindowAssigner(
@@ -72,6 +75,10 @@ class DetectionSpine:
         self.episodes_written = 0
         self.origin_counts: Counter[str] = Counter()
         self.latencies: list[float] = []
+        # None means the shadow pass: detection runs unconditioned, which is the baseline
+        # every conditioned result is measured against (ADR-016).
+        self.conditioning = conditioning
+        self.attributed = 0
 
         # The foundation model keeps its own episode builder rather than annotating the
         # baseline's. The two detectors score on different scales and disagree, and the
@@ -160,6 +167,21 @@ class DetectionSpine:
         return written
 
     def _persist(self, episode) -> int:
+        if self.conditioning is not None:
+            # Record the flag before deciding, so an episode's in-scope siblings are already
+            # in the index when its own turn comes. Deciding first would make the verdict
+            # depend on the order episodes happened to close in.
+            self.conditioning.index.record(episode.channel, episode.t_start_ms, episode.t_end_ms)
+            attribution = self.conditioning.apply(episode)
+            if episode.status is not EpisodeStatus.REAL:
+                self.attributed += 1
+            log.info(
+                "conditioning %s -> %s (%s): %s",
+                episode.channel,
+                episode.status,
+                attribution.verdict,
+                attribution.reason,
+            )
         with self._store_lock:
             episode_id = self.store.record_episode(episode)
             self.episodes_written += 1
@@ -256,6 +278,21 @@ def run(args: argparse.Namespace) -> int:
             # that promise is kept.
             log.warning("foundation model unavailable, continuing on the baseline: %s", exc)
 
+    conditioning = None
+    context_source = None
+    if args.conditioning:
+        context_source = KafkaContextSource(
+            bootstrap, args.context_topic or kafka.context_topic, group=f"{args.group}-context"
+        )
+        context_source.start()
+        conditioning = ConditioningPolicy(
+            source=context_source,
+            thresholds=ConditioningThresholds(
+                min_corroborating_channels=args.min_corroborating_channels,
+                min_scope_fraction=args.min_scope_fraction,
+            ),
+        )
+
     spine = DetectionSpine(
         store,
         window_ms=args.window_ms,
@@ -268,6 +305,7 @@ def run(args: argparse.Namespace) -> int:
         foundation=foundation,
         foundation_threshold=args.foundation_threshold,
         foundation_batch=args.foundation_batch,
+        conditioning=conditioning,
     )
 
     consumer = build_consumer(bootstrap, args.group, args.from_beginning)
@@ -285,6 +323,15 @@ def run(args: argparse.Namespace) -> int:
         f"consuming {topic!r} at {bootstrap} as group {args.group!r} | "
         f"windows {args.window_ms / 1000:g}s/{args.slide_ms / 1000:g}s | "
         f"threshold {args.threshold} | episodes -> postgres",
+        flush=True,
+    )
+    print(
+        "conditioning: "
+        + (
+            f"on, reading {args.context_topic or kafka.context_topic!r}"
+            if conditioning is not None
+            else "OFF (shadow pass -- this is the unconditioned baseline)"
+        ),
         flush=True,
     )
     print(
@@ -408,6 +455,15 @@ def run(args: argparse.Namespace) -> int:
             )
         for line in spine.latency_report():
             print(line, flush=True)
+        if spine.conditioning is not None:
+            print(f"conditioning: {spine.conditioning.summary()}", flush=True)
+            if context_source is not None:
+                print(
+                    f"context events seen {context_source.events_seen:,} "
+                    f"(malformed {context_source.malformed:,})",
+                    flush=True,
+                )
+                context_source.close()
         _print_detector_comparison(store)
         store.close()
 
@@ -471,6 +527,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="quiet gap that closes an episode; defaults to two slides",
     )
     d.add_argument("--warmup-samples", type=int, default=120)
+
+    c = p.add_argument_group("context conditioning (the core contribution)")
+    c.add_argument(
+        "--conditioning",
+        action="store_true",
+        help="condition episodes on the context topic. Off by default so the default run is "
+        "the unconditioned shadow baseline every measurement compares against",
+    )
+    c.add_argument("--context-topic", default=None, help="override CONTEXT_TOPIC")
+    c.add_argument(
+        "--min-corroborating-channels",
+        type=int,
+        default=2,
+        help="how many in-scope channels must move together before a context event explains "
+        "them. Below 2 the policy collapses into blanket suppression",
+    )
+    c.add_argument("--min-scope-fraction", type=float, default=0.25)
 
     f = p.add_argument_group("foundation model (off the critical path, ADR-017)")
     f.add_argument(
