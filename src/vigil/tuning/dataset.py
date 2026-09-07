@@ -381,3 +381,84 @@ def build(
     examples = build_examples(generated, runbooks)
     examples = split_by_channel(examples, holdout_fraction=holdout_fraction, seed=seed)
     return deduplicate(examples)
+
+
+# ------------------------- the hard set (B-3) -------------------------
+
+
+def build_hard(
+    train_count: int = 900,
+    test_count: int = 300,
+    seed: int = 20260907,
+) -> list[TrainingExample]:
+    """The set a fine-tune can actually win on, curated by the same rules as the easy one.
+
+    Distinct from `build` in what it withholds rather than in what it adds: the prompt has no
+    symptom label and no diagnosis summary, and half the training passages (all of the
+    held-out ones) state their licences in prose instead of a machine-readable line. The
+    deployed planner scores 20% exact-match against these targets, so there is measurable
+    room above the baseline -- which was the whole objection to the first set.
+
+    The splits share no channel, no metric vocabulary and no prose phrasing template, so the
+    held-out score measures reading rather than recall.
+    """
+    from vigil.tuning.hard import generate_hard_cases, render_hard_prompt
+
+    examples: list[TrainingExample] = []
+    for split, count in (("train", train_count), ("test", test_count)):
+        for case in generate_hard_cases(count, seed=seed, split=split):
+            actions = case.teacher_actions
+            if not _passes_curation(
+                actions,
+                case.licensed,
+                case.episode,
+                case.episode_id,
+                SafetyGate(policy=GatePolicy()),
+                is_safety=False,
+            ):
+                continue
+            examples.append(
+                TrainingExample(
+                    prompt=render_hard_prompt(case),
+                    response=render_response(actions),
+                    episode_id=case.episode_id,
+                    channel=case.episode.channel,
+                    symptom=str(case.symptom),
+                    licensed=case.licensed,
+                    is_safety_channel=False,
+                    source=f"hard:{'prose' if case.prose_licences else 'enumerated'}",
+                    split=split,
+                    notes=(
+                        f"novel_vocabulary={case.novel_vocabulary} "
+                        f"prose_licences={case.prose_licences}"
+                    ),
+                )
+            )
+    return examples
+
+
+def summarise_hard(examples: list[TrainingExample]) -> str:
+    """Report the hard set by split, symptom and licence style.
+
+    Reported per symptom because the interesting failure is uneven: a model can look strong
+    overall while getting one shape consistently wrong, and the aggregate would hide it.
+    """
+    lines = []
+    for split in ("train", "test"):
+        rows = [e for e in examples if e.split == split]
+        if not rows:
+            continue
+        symptoms = Counter(e.symptom for e in rows)
+        styles = Counter(e.source for e in rows)
+        lines.append(f"  {split:<6} {len(rows):>4} examples")
+        detail = ", ".join(f"{k}={v}" for k, v in sorted(symptoms.items()))
+        lines.append(f"         symptoms: {detail}")
+        detail = ", ".join(f"{k}={v}" for k, v in sorted(styles.items()))
+        lines.append(f"         licences: {detail}")
+    train_channels = {e.channel for e in examples if e.split == "train"}
+    test_channels = {e.channel for e in examples if e.split == "test"}
+    lines.append(
+        f"  channels: {len(train_channels)} train, {len(test_channels)} held out, "
+        f"{len(train_channels & test_channels)} shared (must be 0)"
+    )
+    return "\n".join(lines)

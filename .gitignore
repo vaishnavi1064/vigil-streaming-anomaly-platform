@@ -16,5 +16,10 @@ volumes/
 # Measured results are committed as markdown/CSV under docs/results/; raw dumps are not
 scratch/
 
+# Generated training data and adapters: reproducible from a seed by
+# `python build_planner_dataset.py`, so committing megabytes of JSONL would be storing what a
+# command already produces.
+artifacts/
+
 # Labeled benchmark corpora: large, externally sourced, fetched by scripts/fetch_tsb_ad.py
 Datasets/
