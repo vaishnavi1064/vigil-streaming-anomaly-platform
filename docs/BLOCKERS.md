@@ -105,28 +105,35 @@ silent NaNs come from.
 adapter's score, the per-symptom breakdown and the exact-match delta. If the delta is
 negative, that is the finding and it goes in `docs/EVALUATION.md` next to the rest.
 
-### B-4. Answered: the episode record is fixed and v3 is being measured.
+### B-4. Closed: the record is fixed, v3 measured, NFR-8 still not met.
 
-**Answered 2026-09-07 with option 2.** The defect is fixed (ADR-035): an episode now carries
-`onset_ms`, the event time of the reading that drove its score, and conditioning compares
-onsets rather than window boundaries.
+**Closed 2026-09-07.** Option 2 was taken: the defect was fixed (ADR-035) and the run
+repeated. All four measurements are published side by side in `docs/EVALUATION.md`
+sections 3.4-3.7.
 
-**Why the earlier measurements were invalid.** An episode was timestamped with the start of
-the window that flagged it, and windows slide by 10 s, so the only start differences two
-episodes could express were 0, 10, 20 ... seconds. A 5 s synchrony tolerance selects exactly
-one of them: identical bucket. v1 asked the same coincidence question at a 30 s bucket. The
-synchrony hypothesis was **untested rather than refuted**, and ground truth for the same run
-puts consecutive in-scope artifact onsets a median 1.8 s apart -- all of it below the grid.
+| Run | What changed | FP reduction | Recall loss | NFR-8 |
+|---|---|---|---|---|
+| v1 | co-occurrence in a 30 s window | +60.9% | -36.7% | missed |
+| v2 | synchrony, compared on window starts | +9.0% | -10.0% | missed |
+| low density | 20 deploys/hour | +6.7% | -6.7% | missed |
+| **v3** | synchrony, compared on **true onsets** | **+11.1%** | **-6.7%** | **missed** |
 
-**That the fix resolves anything is measured, not assumed.** Over a 420-second synthetic
-scenario all 35 episodes now carry onsets strictly off the 10 s grid, spread from 0 to 27 s
-within their window. A regression test states the defect as a difference in verdict: three
-channels flagged in one window, two moving within a second and the third seventeen seconds
-later, corroborate on window starts and do not on onsets.
+**What the fix bought.** v3 against v2: +2.1 points of reduction and 3.3 points less recall
+loss, on the same seed and density with nothing else changed. Real and in the expected
+direction. Not a rescue.
 
-**v3 is the same scenario, seed and density as v1, v2 and the low-density run**, with nothing
-changed but the timestamp resolution, and whatever it says goes into
-`docs/EVALUATION.md` section 3.6 beside the other three. v1 and v2 stay in the write-up.
+**What it settled.** The synchrony hypothesis is no longer untested. `corroborated=7,
+implausible=69, isolated=0` over 76 episodes: the corroboration test never concluded a
+channel had moved alone, mostly because the siblings that would exonerate it had not closed
+yet when its turn came (G-7). Two of its seven attributions still cost a real fault, so the
+collateral alone (6.7%) exceeds the 5% tolerance before the 40% target is considered.
+
+**No fourth attempt is planned.** Reaching 40% with this policy would need a corroboration
+index over completed windows rather than closed episodes, or a different discriminator
+altogether -- magnitude and direction agreement across scope rather than timing. Either is a
+new hypothesis, not a refinement of this one, and the honest place to stop is with the
+negative result published and the mechanism that *does* work (plausibility, 69 of 76 episodes
+correctly raised; fail-open, 76 of 76) reported separately.
 
 ### B-5. NFR-3 asks for event-to-flag in 2 s, which the window geometry makes impossible. Restate it or change the geometry?
 

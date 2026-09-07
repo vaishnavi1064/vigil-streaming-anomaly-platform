@@ -208,8 +208,12 @@ to a 10 s grid before the policy ever sees them.
 
 That reframes v1 too. Both attempts asked a coincidence question at two different bucket
 widths: v1 at 30 s (any overlap in the window), v2 at 0 s (the same bucket). Neither asked
-the intended physical question. **The synchrony hypothesis is untested, not refuted**, and
-this measurement does not support a claim in either direction about it.
+the intended physical question. **The synchrony hypothesis was untested rather than refuted**
+at this point, and neither measurement supported a claim in either direction about it.
+
+It has since been tested. The episode record was fixed (ADR-035) and the run repeated as v3
+in section 3.6: with true onsets the hypothesis is answerable, and the answer is that the
+criterion is too weak to reach NFR-8 rather than that it was mismeasured.
 
 What can be claimed from the two runs: the **mechanism check works**. In both, every episode
 overlapping a pipeline event that had lost nothing was raised as `implausible` rather than
@@ -298,6 +302,89 @@ Scoped precisely: an empty topic leaves the context source *available and silent
 policy answers with `no_context`. A source that cannot be reached at all is answered with
 `fail_open` and is covered by unit tests in `tests/test_conditioning.py` -- taking the broker
 away mid-run would take the readings with it and leave nothing to condition.
+
+### 3.6 v3 -- synchrony on true onsets. The hypothesis is now tested, and it fails.
+
+v1 and v2 both compared window boundaries, quantised to the 10 s slide, so a 5 s tolerance
+could only ever match an exact tie (section 3.4). The episode record now carries the event
+time of the reading that drove the score (ADR-035), and over a 420-second scenario every one
+of 35 episodes lands strictly off the grid, spread 0-27 s inside its window. So the
+comparison finally has the resolution the criterion was written for.
+
+Run `d71db158`, **same command, same seed, same density as v1 and v2**, with nothing changed
+but the timestamp the policy reads:
+
+```
+python evaluate.py --duration 900 --rate 400 --channels 12     --deploys-per-hour 60 --faults-per-hour 120     --report-json docs/results/paired-evaluation-v3-onset.json
+```
+
+| Measure | Shadow | Conditioned | Delta |
+|---|---|---|---|
+| Episodes recorded | 76 | 76 | |
+| Pages raised | 76 | 69 | -7 |
+| Attributed (not paged) | 0 | 7 | |
+| False pages (artifact + unexplained) | 63 | 56 | **-7** |
+| of which artifact-driven | 42 | 36 | -6 |
+| Recall, all real faults | 90.0% (27/30) | 83.3% (25/30) | **-6.7%** |
+| Recall, faults **outside** windows | 82.4% (14/17) | 76.5% (13/17) | -5.9% |
+| Recall, faults **inside** windows | 100.0% (13/13) | 92.3% (12/13) | -7.7% |
+| Recall, faults in **quiet** windows | 100.0% (3/3) | 66.7% (2/3) | -33.3% |
+| Precision (incident-level) | 17.1% | 18.8% | +1.7% |
+
+**false-positive reduction +11.1% (target >= 40%, missed) -- recall loss +6.7% (tolerance
+<= 5%, missed). NFR-8 NOT MET.**
+
+Fail-open held: **76 of 76** episodes identical to the unconditioned pass, `no_context=76`.
+
+### 3.7 All four measurements, and what they add up to
+
+| Run | What changed | FP reduction | Recall loss | Quiet-window recall | NFR-8 |
+|---|---|---|---|---|---|
+| **v1** | corroboration by co-occurrence in a 30 s window | **+60.9%** | **-36.7%** | -100.0% | missed |
+| **v2** | required synchrony, compared on window starts | +9.0% | -10.0% | -33.3% | missed |
+| **low density** | 20 deploys/hour instead of 60 | +6.7% | -6.7% | +0.0% | missed |
+| **v3** | required synchrony, compared on **true onsets** | +11.1% | **-6.7%** | -33.3% | missed |
+
+Read down the columns rather than across the rows, because the trajectory is the finding.
+
+**v1 was not a near-miss, it was blanket suppression.** It cleared the 40% target by
+attributing 39 of 79 episodes, and it paid for that by losing every real fault in a quiet
+deploy window -- where by construction there is no artifact to attribute anything to. The
+population that exists to catch exactly this (ADR-015) caught it.
+
+**v2 and v3 are the honest version of the mechanism, and it is too weak.** Requiring
+synchrony cuts attributions from 39 to 7 and holds recall loss to 6.7%, but it buys only
+11.1% of the false pages. The verdict breakdown says why: `corroborated=7, implausible=69,
+isolated=0`. In 76 episodes the corroboration test **never once** concluded that a channel
+had moved alone -- not because siblings always moved with it, but because the in-scope
+siblings that would exonerate it had usually not closed yet when its own turn came (gap G-7).
+The test that was supposed to discriminate mostly declines to fire at all.
+
+**The onset fix moved the numbers in the right direction and did not rescue the target.**
+v3 against v2: +2.1 points of reduction and 3.3 points less recall loss. Real, consistent
+with the resolution having improved, and nowhere near 40%.
+
+**Two of the seven attributions still cost a real fault**, including one of the three in a
+quiet window. So the residual collateral alone (2/30 = 6.7%) exceeds NFR-8's 5% tolerance
+before the reduction target is even considered.
+
+#### The conclusion this supports
+
+The **plausibility half of the design works**: 69 of 76 episodes overlapping a pipeline event
+that had lost nothing were raised as `implausible` rather than attributed, which is the
+reconciliation-conditioning mechanism doing exactly its job, in every run. Fail-open holds
+end to end.
+
+The **corroboration half does not deliver NFR-8**, and after four measurements the reason is
+no longer a measurement artefact: at this density, on this detector, in-scope synchrony is
+too rare among *detected* episodes to attribute enough of them, and when it does fire it is
+roughly a coin flip. Reaching 40% with this policy would need either a corroboration index
+over completed windows rather than closed episodes (removing G-7's asymmetry at the cost of
+latency), or a different discriminator entirely -- magnitude and direction agreement across
+scope, say, rather than timing.
+
+**NFR-8 is not met and is reported as not met.** The false-positive reduction is +11.1%
+against a 40% target. That is the result.
 
 ## 4. Q2 — detector vs. baseline on TSB-AD-M
 

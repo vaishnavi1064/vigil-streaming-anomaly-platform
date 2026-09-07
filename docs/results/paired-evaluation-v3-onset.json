@@ -1,0 +1,67 @@
+{
+  "run": "d71db158",
+  "plan": "docs\\results\\paired-plan-d71db158.json",
+  "config": {
+    "duration_s": 900.0,
+    "rate": 400.0,
+    "channels": 12,
+    "seed": 20260906,
+    "threshold": 8.0,
+    "min_corroborating_channels": 2,
+    "min_scope_fraction": 0.25,
+    "synchrony_ms": 5000
+  },
+  "ground_truth": {
+    "faults": 30,
+    "faults_inside_windows": 13,
+    "faults_outside_windows": 17,
+    "faults_inside_quiet_windows": 3,
+    "artifacts": 56,
+    "windows": 14
+  },
+  "shadow": {
+    "label": "shadow",
+    "episodes": 76,
+    "paged": 76,
+    "attributed": 0,
+    "faults_total": 30,
+    "faults_detected": 27,
+    "faults_inside_total": 13,
+    "faults_inside_detected": 13,
+    "faults_outside_total": 17,
+    "faults_outside_detected": 14,
+    "faults_quiet_window_total": 3,
+    "faults_quiet_window_detected": 3,
+    "artifact_pages": 42,
+    "unexplained_pages": 21
+  },
+  "conditioned": {
+    "label": "conditioned",
+    "episodes": 76,
+    "paged": 69,
+    "attributed": 7,
+    "faults_total": 30,
+    "faults_detected": 25,
+    "faults_inside_total": 13,
+    "faults_inside_detected": 12,
+    "faults_outside_total": 17,
+    "faults_outside_detected": 13,
+    "faults_quiet_window_total": 3,
+    "faults_quiet_window_detected": 2,
+    "artifact_pages": 36,
+    "unexplained_pages": 20
+  },
+  "fp_reduction": 0.1111111111111111,
+  "recall_loss": 0.06666666666666665,
+  "recall_loss_inside": 0.07692307692307687,
+  "meets_target": false,
+  "fail_open": {
+    "shadow_episodes": 76,
+    "fail_open_episodes": 76,
+    "identical": 76,
+    "missing_from_fail_open": 0,
+    "extra_in_fail_open": 0,
+    "suppressed": 0,
+    "attributed": 0
+  }
+}
