@@ -137,14 +137,17 @@ def test_the_context_endpoint_exists_and_is_empty_before_phase_three(client):
     assert body["count"] == 0
 
 
-def test_the_dashboard_page_renders_and_names_its_missing_panel(client):
+def test_the_dashboard_page_renders_and_carries_the_reconciliation_panel(client):
     r = client.get("/")
     assert r.status_code == 200
     html = r.text
     assert "Vigil" in html
-    # A panel reading "drift: 0" when nothing measures drift would be worse than none, so
-    # the page has to say why it is missing rather than quietly omit it.
-    assert "Reconciliation and drift panel" in html
+    # The panel was absent until the Phase 2 harness existed, because one reading "drift: 0"
+    # while nothing measures drift is worse than none. It exists now, and it still refuses to
+    # render numbers without a run behind them -- which the API tests below hold it to.
+    assert "Reconciliation" in html
+    assert "no reconciliation run recorded" in html
+    assert "Ledger drift" in html
 
 
 def test_the_dashboard_carries_no_emoji(client):

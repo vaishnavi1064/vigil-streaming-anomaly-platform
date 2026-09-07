@@ -159,10 +159,10 @@ const STATUS = {
 
 // Reconciliation grades, glyph plus word for the same reason as status.
 const GRADE = {
-  ok:       { glyph: "○", label: "ok" },
-  info:     { glyph: "◌", label: "info" },
-  warning:  { glyph: "◐", label: "warning" },
-  critical: { glyph: "●", label: "critical" },
+  ok:       { glyph: "\\u25CB", label: "ok" },
+  info:     { glyph: "\\u25CC", label: "info" },
+  warning:  { glyph: "\\u25D0", label: "warning" },
+  critical: { glyph: "\\u25CF", label: "critical" },
 };
 
 function tile(label, value, note) {

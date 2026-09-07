@@ -30,19 +30,23 @@ below comes from a command recorded in `docs/EVALUATION.md`.
 | Hot-path detection latency, p99 | **0.49 ms** (NFR-1 budget: 250 ms) |
 | Foundation model, off critical path, p99 | 34.8 ms amortised per window |
 | Reconciliation drift | **0** over 360,000 readings, verified by independent broker-offset audit |
-| Chaos | **4/4** fault modes recovered to a verified consistent state, each proven to have disrupted something |
+| Chaos | **5/5** fault modes recovered to a verified consistent state, each proven to have disrupted something |
 | Flink parity | 1,056 windows scored, differences of exactly **0.0000** against the Python detector, 30 checkpoints at 283 ms average |
+| Flink exactly-once, **across a crash** | TaskManager SIGKILLed mid-checkpoint: restored from checkpoint 5, recovered in **14.9 s**, and a `read_committed` consumer saw **328 window scores with 0 duplicates** |
+| Detection benchmark, 144 labelled series | z-score median AUC-PR **0.198** against Chronos-Bolt-tiny **0.152**, 78 wins to 56, at **141x less compute**. The foundation model loses |
+| Agent quality gate | 400 episodes, 1,267 actions: **100%** grounded, gate-approved and sandboxed; 97.1% carrying a runbook citation |
 | Context conditioning vs. the unconditioned baseline | +9.0% false-page reduction against a 40% target, -10.0% recall against a 5% tolerance. **NFR-8: not met, twice** |
 | Live feed | 1,387 MQTT messages -> 11,089 readings across 336 channels in 45 s, 0 gaps |
-| Tests | **500** (unit, plus 29 integration against real Kafka and Postgres) |
+| Tests | **524** (unit, plus integration against real Kafka, Postgres and a live Flink cluster) |
 
 What these numbers are **not**. The producer and consumer figures were taken separately, so
 neither is an end-to-end throughput claim. Zero drift is measured over 15 minutes, not the
-four hours NFR-6 asks for. The Flink exactly-once path has never been fault-tested, so that
-guarantee currently rests on configuration rather than on evidence from this deployment. And
-the conditioning result is a **failure, published as one**: the second attempt turned out to
-be testing something other than what it claimed, which is written up in full rather than
-retried until it passed. `docs/CORRECTNESS.md` says where each guarantee starts and stops;
+four hours NFR-6 asks for. The exactly-once evidence is one kill of one job on one
+TaskManager, not an exhaustive test. The benchmark scored 144 of 200 series -- truncation
+excluded the late-onset half -- and used Chronos-Bolt at its smallest size. And the
+conditioning result is a **failure, published as one**: the second attempt turned out to be
+testing something other than what it claimed, which is written up in full rather than retried
+until it passed. `docs/CORRECTNESS.md` says where each guarantee starts and stops;
 `docs/BLOCKERS.md` lists every gap of this kind in one table.
 
 ![The Phase 1 dashboard: KPI tiles for episode count and per-detector latency against the
@@ -171,7 +175,7 @@ python benchmark.py --report-json docs/results/benchmark.json
 Tests:
 
 ```bash
-python -m pytest                       # all 500, needs docker compose up for the integration ones
+python -m pytest                       # all 524, needs docker compose up for the integration ones
 python -m pytest -m "not integration"  # unit only
 ```
 
