@@ -4,6 +4,7 @@ Detection scores a window; conditioning decides what that score *means* given wh
 happening. The mechanism is one join and one policy, and both are here.
 """
 
+from vigil.conditioning.barrier import CorroborationBarrier, HeldEpisode
 from vigil.conditioning.policy import (
     Attribution,
     ConditioningPolicy,
@@ -26,7 +27,9 @@ __all__ = [
     "ConditioningPolicy",
     "ConditioningThresholds",
     "ContextSignalSource",
+    "CorroborationBarrier",
     "FlaggedWindowIndex",
+    "HeldEpisode",
     "KafkaContextSource",
     "SignalLookup",
     "SignalWindow",

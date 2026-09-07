@@ -29,6 +29,7 @@ from collections import Counter, deque
 
 from confluent_kafka import Consumer, KafkaError, TopicPartition
 
+from vigil.conditioning.barrier import CorroborationBarrier
 from vigil.conditioning.policy import (
     ConditioningPolicy,
     ConditioningThresholds,
@@ -83,6 +84,8 @@ class DetectionSpine:
         foundation_threshold: float = 6.0,
         foundation_batch: int = 32,
         conditioning: ConditioningPolicy | None = None,
+        verdict_buffer_ms: int = 30_000,
+        watermark_idle_ms: int = 60_000,
         explanation_worker: ExplanationWorker | None = None,
         explain_history_s: float = 300.0,
     ) -> None:
@@ -94,7 +97,9 @@ class DetectionSpine:
             min_points=min_points,
         )
         self.baseline = RollingZScoreDetector(warmup_samples=warmup_samples)
-        self.builder = EpisodeBuilder(threshold=threshold, merge_gap_ms=merge_gap_ms)
+        self.builder = EpisodeBuilder(
+            threshold=threshold, merge_gap_ms=merge_gap_ms, on_open=self._on_episode_opened
+        )
         self.readings_seen = 0
         self.episodes_written = 0
         self.origin_counts: Counter[str] = Counter()
@@ -103,6 +108,18 @@ class DetectionSpine:
         # every conditioned result is measured against (ADR-016).
         self.conditioning = conditioning
         self.attributed = 0
+        # The verdict waits behind an event-time barrier so the corroboration index holds
+        # every sibling that could exonerate the episode, not merely the ones that happened
+        # to close first (G-7). Absent on the shadow pass, which decides nothing.
+        self.barrier = (
+            CorroborationBarrier(buffer_ms=verdict_buffer_ms, idle_ms=watermark_idle_ms)
+            if conditioning is not None
+            else None
+        )
+        self.watermark_idle_ms = watermark_idle_ms
+        # Both the main loop and the off-path worker open and close episodes, and the
+        # corroboration index and the barrier are plain Python structures.
+        self._conditioning_lock = threading.Lock()
 
         # Per-channel sample history, kept only when there is somewhere to send it. An
         # explainer that is not configured must not cost the hot path a deque per channel:
@@ -117,7 +134,11 @@ class DetectionSpine:
         # opinion into episodes the baseline chose would discard exactly that comparison.
         self.foundation = foundation
         self.foundation_builder = (
-            EpisodeBuilder(threshold=foundation_threshold, merge_gap_ms=merge_gap_ms)
+            EpisodeBuilder(
+                threshold=foundation_threshold,
+                merge_gap_ms=merge_gap_ms,
+                on_open=self._on_episode_opened,
+            )
             if foundation is not None
             else None
         )
@@ -135,6 +156,38 @@ class DetectionSpine:
         )
         if self.offpath is not None:
             self.offpath.start()
+
+    def _on_episode_opened(self, episode) -> None:
+        """Record the departure the moment it is known, not when the episode ends.
+
+        The corroboration index answers "which channels moved at this instant". Filling it
+        at episode close made the answer depend on how long each episode happened to run:
+        a two-minute excursion is evidence about its first second, and it was arriving two
+        minutes late. This is the index half of G-7; the barrier is the other half.
+        """
+        if self.conditioning is None:
+            return
+        with self._conditioning_lock:
+            self.conditioning.index.record(episode.channel, episode.began_ms, episode.t_end_ms)
+
+    def _release_ready(self) -> list[int]:
+        """Decide every held episode whose sibling evidence has now closed in event time."""
+        if self.barrier is None or not self.barrier.pending:
+            # Checked once per reading, so the empty case has to be free. Reading the
+            # length outside the lock is safe: a hold racing this call is released by the
+            # next reading, and there is always a next reading or a drain.
+            return []
+        watermark = self.windows.fleet_watermark_ms(self.watermark_idle_ms)
+        with self._conditioning_lock:
+            due = self.barrier.release(watermark)
+        return [self._decide_and_store(episode) for episode in due]
+
+    def _flush_barrier(self) -> list[int]:
+        if self.barrier is None:
+            return []
+        with self._conditioning_lock:
+            due = self.barrier.flush()
+        return [self._decide_and_store(episode) for episode in due]
 
     def _on_foundation_scores(self, scores) -> None:
         """Called from the off-path worker thread; must stay cheap and thread-safe."""
@@ -169,7 +222,8 @@ class DetectionSpine:
             self.latencies.append(score.latency_ms)
             episode = self.builder.add(score, window.injected)
             if episode is not None:
-                written.append(self._persist(episode))
+                written.extend(self._persist(episode))
+        written.extend(self._release_ready())
         return written
 
     def drain(self) -> list[int]:
@@ -185,9 +239,9 @@ class DetectionSpine:
             self.latencies.append(score.latency_ms)
             episode = self.builder.add(score, window.injected)
             if episode is not None:
-                written.append(self._persist(episode))
+                written.extend(self._persist(episode))
         for episode in self.builder.close_all():
-            written.append(self._persist(episode))
+            written.extend(self._persist(episode))
 
         if self.offpath is not None:
             # Let the model finish its backlog before closing its episodes, or the last
@@ -196,7 +250,13 @@ class DetectionSpine:
             self.offpath.stop()
             with self._foundation_lock:
                 for episode in self.foundation_builder.close_all():
-                    written.append(self._persist(episode))
+                    written.extend(self._persist(episode))
+
+        # The stream is over, so no further watermark will ever arrive to release what the
+        # barrier is still holding. Those episodes are decided on the evidence that exists,
+        # which is now all there will ever be.
+        written.extend(self._release_ready())
+        written.extend(self._flush_barrier())
         return written
 
     def _remember(self, reading: Reading) -> None:
@@ -237,29 +297,41 @@ class DetectionSpine:
             )
         )
 
-    def _persist(self, episode) -> int:
-        if self.conditioning is not None:
-            # Record the flag before deciding, so an episode's in-scope siblings are already
-            # in the index when its own turn comes. Deciding first would make the verdict
-            # depend on the order episodes happened to close in.
-            self.conditioning.index.record(episode.channel, episode.began_ms, episode.t_end_ms)
-            attribution = self.conditioning.apply(episode)
-            if attribution.event is not None:
-                # The episode's attributed_to is a foreign key into context_events, so the
-                # event has to exist before the episode that points at it. Writing the
-                # episode first raises ForeignKeyViolation -- which is the constraint doing
-                # its job, and is how this was found.
-                with self._store_lock:
-                    self.store.record_context_event(attribution.event)
-            if episode.status is not EpisodeStatus.REAL:
-                self.attributed += 1
-            log.info(
-                "conditioning %s -> %s (%s): %s",
-                episode.channel,
-                episode.status,
-                attribution.verdict,
-                attribution.reason,
-            )
+    def _persist(self, episode) -> list[int]:
+        """Route a closed episode: straight to the store, or behind the verdict barrier.
+
+        Unconditioned, an episode is durable as soon as it closes. Conditioned, it waits
+        until the fleet watermark has passed its onset by the buffer, because the verdict
+        is a statement about several channels and cannot be made from one of them.
+        """
+        if self.barrier is None:
+            return [self._store(episode)]
+        with self._conditioning_lock:
+            self.barrier.hold(episode, self.windows.fleet_watermark_ms(self.watermark_idle_ms))
+        return []
+
+    def _decide_and_store(self, episode) -> int:
+        assert self.conditioning is not None
+        attribution = self.conditioning.apply(episode)
+        if attribution.event is not None:
+            # The episode's attributed_to is a foreign key into context_events, so the
+            # event has to exist before the episode that points at it. Writing the
+            # episode first raises ForeignKeyViolation -- which is the constraint doing
+            # its job, and is how this was found.
+            with self._store_lock:
+                self.store.record_context_event(attribution.event)
+        if episode.status is not EpisodeStatus.REAL:
+            self.attributed += 1
+        log.info(
+            "conditioning %s -> %s (%s): %s",
+            episode.channel,
+            episode.status,
+            attribution.verdict,
+            attribution.reason,
+        )
+        return self._store(episode)
+
+    def _store(self, episode) -> int:
         with self._store_lock:
             episode_id = self.store.record_episode(episode)
             self.episodes_written += 1
@@ -408,6 +480,8 @@ def run(args: argparse.Namespace) -> int:
         foundation_threshold=args.foundation_threshold,
         foundation_batch=args.foundation_batch,
         conditioning=conditioning,
+        verdict_buffer_ms=args.verdict_buffer_ms,
+        watermark_idle_ms=args.watermark_idle_ms,
         explanation_worker=explanation_worker,
         explain_history_s=args.explain_history_s,
     )
@@ -432,7 +506,9 @@ def run(args: argparse.Namespace) -> int:
     print(
         "conditioning: "
         + (
-            f"on, reading {args.context_topic or kafka.context_topic!r}"
+            f"on, reading {args.context_topic or kafka.context_topic!r}, "
+            f"verdicts held {args.verdict_buffer_ms / 1000:g}s of event time behind the "
+            f"fleet watermark"
             if conditioning is not None
             else "OFF (shadow pass -- this is the unconditioned baseline)"
         ),
@@ -561,6 +637,8 @@ def run(args: argparse.Namespace) -> int:
             print(line, flush=True)
         if spine.conditioning is not None:
             print(f"conditioning: {spine.conditioning.summary()}", flush=True)
+            if spine.barrier is not None:
+                print(f"  {spine.barrier.hold_report()}", flush=True)
             if context_source is not None:
                 print(
                     f"context events seen {context_source.events_seen:,} "
@@ -655,6 +733,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="how close together in-scope channels must move to count as moving together. "
         "A deploy artifact blips its channels at the same instant; independent faults in "
         "the same window are not synchronised",
+    )
+    c.add_argument(
+        "--verdict-buffer-ms",
+        type=int,
+        default=30_000,
+        help="event-time delay between an episode closing and its verdict, so every "
+        "in-scope sibling that could exonerate it has closed first (G-7). Costs detection "
+        "latency and buys evidence; 0 restores the racing behaviour v1-v3 measured",
+    )
+    c.add_argument(
+        "--watermark-idle-ms",
+        type=int,
+        default=60_000,
+        help="how far behind the fastest channel a channel may fall before the fleet "
+        "watermark stops waiting for it (ADR-019). 0 waits for every channel forever",
     )
 
     e = p.add_argument_group("explanation (rare path, ADR-004)")

@@ -19,7 +19,7 @@ needs to be.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -128,13 +128,21 @@ class EpisodeBuilder:
     channel must stay quiet before an open episode is considered over; it defaults to two
     window slides, so a single unflagged window in the middle of a genuine event does not
     split it in two.
+
+    `on_open` fires the moment a channel's first flagged window arrives, before the episode
+    is complete. Conditioning uses it to record *when* a channel departed as soon as that is
+    known, rather than when the episode eventually closes -- an episode that runs for two
+    minutes is evidence about its first second, and withholding it until the end is what put
+    the corroboration index behind the question it was being asked (G-7).
     """
 
     threshold: float = 8.0
     merge_gap_ms: int = 20_000
+    on_open: Callable[[Episode], None] | None = None
 
     _open: dict[str, _OpenEpisode] = field(default_factory=dict, init=False, repr=False)
     windows_flagged: int = field(default=0, init=False)
+    episodes_opened: int = field(default=0, init=False)
     episodes_emitted: int = field(default=0, init=False)
 
     def add(
@@ -170,21 +178,24 @@ class EpisodeBuilder:
             or score.window_start_ms - open_ep.last_window_end_ms >= self.merge_gap_ms
         ):
             closed = self._close(channel) if open_ep else None
-            self._open[channel] = _OpenEpisode(
-                episode=Episode(
-                    channel=channel,
-                    t_start_ms=score.window_start_ms,
-                    t_end_ms=score.window_end_ms,
-                    raised_by=score.detector,
-                    peak_score=score.score,
-                    window_count=1,
-                    threshold=self.threshold,
-                    onset_ms=score.onset_ms,
-                    scores=[sample],
-                    injected_origins=tuple(dict.fromkeys(origins)),
-                ),
-                last_window_end_ms=score.window_end_ms,
+            opened = Episode(
+                channel=channel,
+                t_start_ms=score.window_start_ms,
+                t_end_ms=score.window_end_ms,
+                raised_by=score.detector,
+                peak_score=score.score,
+                window_count=1,
+                threshold=self.threshold,
+                onset_ms=score.onset_ms,
+                scores=[sample],
+                injected_origins=tuple(dict.fromkeys(origins)),
             )
+            self._open[channel] = _OpenEpisode(
+                episode=opened, last_window_end_ms=score.window_end_ms
+            )
+            self.episodes_opened += 1
+            if self.on_open is not None:
+                self.on_open(opened)
             return closed
 
         ep = open_ep.episode

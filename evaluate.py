@@ -107,6 +107,18 @@ def run_step(name: str, argv: list[str], env: dict | None = None, timeout: float
     return proc.stdout
 
 
+def conditioning_lines(stdout: str) -> list[str]:
+    """The detector's own account of what conditioning did, kept with the numbers.
+
+    The verdict breakdown, the corroboration-evidence counts and the barrier's measured
+    delay are the evidence for and against every claim in `docs/EVALUATION.md` section 3.
+    Scraping them out of a console afterwards is how a number ends up in a document with
+    no run behind it, so they travel in the report.
+    """
+    keep = ("conditioning:", "corroboration evidence", "verdict barrier:", "context events seen")
+    return [line.strip() for line in stdout.splitlines() if line.strip().startswith(keep)]
+
+
 def make_schema(settings: PostgresSettings, name: str) -> None:
     with psycopg.connect(settings.dsn, autocommit=True) as conn:
         conn.execute(f'DROP SCHEMA IF EXISTS "{name}" CASCADE')
@@ -221,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # --- 4. conditioned: identical records ---
     make_schema(postgres, conditioned_schema)
-    run_step(
+    conditioned_stdout = run_step(
         "conditioned pass (conditioning ON)",
         [
             *detector_args,
@@ -234,6 +246,8 @@ def main(argv: list[str] | None = None) -> int:
             str(args.min_scope_fraction),
             "--synchrony-ms",
             str(args.synchrony_ms),
+            "--verdict-buffer-ms",
+            str(args.verdict_buffer_ms),
         ],
         env={"PGOPTIONS": f"-c search_path={conditioned_schema}"},
         timeout=1800,
@@ -258,6 +272,8 @@ def main(argv: list[str] | None = None) -> int:
                 str(args.min_scope_fraction),
                 "--synchrony-ms",
                 str(args.synchrony_ms),
+                "--verdict-buffer-ms",
+                str(args.verdict_buffer_ms),
             ],
             env={"PGOPTIONS": f"-c search_path={fail_open_schema}"},
             timeout=1800,
@@ -312,6 +328,7 @@ def main(argv: list[str] | None = None) -> int:
                         "min_corroborating_channels": args.min_corroborating_channels,
                         "min_scope_fraction": args.min_scope_fraction,
                         "synchrony_ms": args.synchrony_ms,
+                        "verdict_buffer_ms": args.verdict_buffer_ms,
                     },
                     "ground_truth": {
                         "faults": len(truth.faults),
@@ -328,6 +345,7 @@ def main(argv: list[str] | None = None) -> int:
                     "recall_loss_inside": comparison.recall_loss_inside,
                     "meets_target": comparison.meets_target,
                     "fail_open": asdict(fail_open) if fail_open else None,
+                    "conditioning": conditioning_lines(conditioned_stdout),
                 },
                 indent=2,
             ),
@@ -359,6 +377,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--min-corroborating-channels", type=int, default=2)
     p.add_argument("--min-scope-fraction", type=float, default=0.25)
     p.add_argument("--synchrony-ms", type=int, default=5_000)
+    p.add_argument(
+        "--verdict-buffer-ms",
+        type=int,
+        default=30_000,
+        help="event-time delay before a conditioning verdict is taken, so the in-scope "
+        "siblings that could exonerate an episode have closed first (G-7). 0 reproduces "
+        "the racing behaviour v1-v3 measured",
+    )
     p.add_argument("--fp-target", type=float, default=0.40, help="NFR-8 half one")
     p.add_argument("--recall-tolerance", type=float, default=0.05, help="NFR-8 half two")
     p.add_argument("--plan", type=Path, default=None)

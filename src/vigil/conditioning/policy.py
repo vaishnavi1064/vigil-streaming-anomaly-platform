@@ -193,6 +193,12 @@ class ConditioningPolicy:
     attributed: int = field(default=0, init=False)
     failed_open: int = field(default=0, init=False)
     verdicts: dict[str, int] = field(default_factory=dict, init=False)
+    # How much evidence each scoped decision actually had. G-7 is the claim that these were
+    # near-zero not because channels moved alone but because the siblings had not arrived,
+    # so the two populations have to be counted separately: siblings that moved *with* the
+    # episode (synchronous) and siblings that moved anywhere in its span (present at all).
+    synchronous_siblings: list[int] = field(default_factory=list, init=False)
+    siblings_in_span: list[int] = field(default_factory=list, init=False)
 
     def decide(self, episode: Episode) -> Attribution:
         self.decided += 1
@@ -297,6 +303,14 @@ class ConditioningPolicy:
         corroborating = len(siblings) + 1
         scope_size = len(scope) if scope else corroborating
 
+        # Recorded whatever the verdict: "no sibling moved with it" and "no sibling had
+        # arrived yet" are different findings and v1-v3 could not tell them apart.
+        in_span = self.index.flagged_in(episode.t_start_ms, episode.t_end_ms)
+        in_span = (in_span & scope) if scope else in_span
+        in_span.discard(episode.channel)
+        self.synchronous_siblings.append(len(siblings))
+        self.siblings_in_span.append(len(in_span))
+
         enough_channels = corroborating >= self.thresholds.min_corroborating_channels
         enough_fraction = corroborating / scope_size >= self.thresholds.min_scope_fraction
 
@@ -374,7 +388,31 @@ class ConditioningPolicy:
         if self.failed_open:
             parts.append(f"failed open {self.failed_open:,}")
         breakdown = ", ".join(f"{k}={v}" for k, v in sorted(self.verdicts.items()))
-        return " | ".join(parts) + (f" | {breakdown}" if breakdown else "")
+        line = " | ".join(parts) + (f" | {breakdown}" if breakdown else "")
+        if not self.synchronous_siblings:
+            return line
+        return f"{line}\n  {self.evidence_report()}"
+
+    def evidence_report(self) -> str:
+        """How much corroboration evidence the scoped decisions actually had.
+
+        This is the G-7 measurement. A corroboration test that never fires is ambiguous
+        between "channels really do move alone here" and "the siblings had not arrived
+        yet", and only the second is a bug. Reporting both populations makes the two
+        distinguishable in every future run rather than reconstructible from a diagnosis.
+        """
+        n = len(self.synchronous_siblings)
+        if not n:
+            return "no scoped decisions"
+        sync_any = sum(1 for c in self.synchronous_siblings if c)
+        span_any = sum(1 for c in self.siblings_in_span if c)
+        return (
+            f"corroboration evidence over {n} scoped decisions: "
+            f"in-scope siblings synchronous mean {sum(self.synchronous_siblings) / n:.2f} "
+            f"({sync_any} decisions with >=1) | "
+            f"present anywhere in the episode span mean "
+            f"{sum(self.siblings_in_span) / n:.2f} ({span_any} decisions with >=1)"
+        )
 
 
 _SEVERITY_ORDER = {

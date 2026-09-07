@@ -166,6 +166,28 @@ class SlidingWindowAssigner:
         state = self._channels.get(channel)
         return state.watermark_ms if state else None
 
+    def fleet_watermark_ms(self, idle_ms: int = 0) -> int | None:
+        """The event time before which **every** channel's windows have closed.
+
+        The minimum across channels, not the maximum, because a question about several
+        channels at once is only answerable once the slowest of them has passed the span in
+        question. Any cross-channel decision taken on a per-channel watermark is racing the
+        channels it has not heard from yet.
+
+        `idle_ms` follows ADR-019: a channel that has fallen further than this behind the
+        fastest is treated as idle and excluded, so one silent device cannot hold the whole
+        fleet's event time still. Zero disables the exclusion, which is the strict reading.
+        """
+        marks = [s.watermark_ms for s in self._channels.values() if s.watermark_ms is not None]
+        if not marks:
+            return None
+        if idle_ms > 0:
+            cutoff = max(marks) - idle_ms
+            live = [m for m in marks if m >= cutoff]
+            if live:
+                marks = live
+        return min(marks)
+
     @property
     def open_window_count(self) -> int:
         return sum(len(s.open_windows) for s in self._channels.values())
