@@ -35,7 +35,7 @@ Phases are from `BUILD.md` section 7; stories from `docs/USER_STORIES.md`.
 | C1 | Z-score baseline detector | **Done** - Welford, decayed reference, mean + dispersion, 18 tests |
 | C2 | Foundation-model detector | **Done** - Chronos-Bolt-tiny zero-shot, batched off the critical path, 16 tests |
 | D1 | Reconciliation-gated detection | **Done and measured** - the mechanism check works: 40 episodes overlapping a lossless pipeline event were correctly raised as `implausible`, not attributed |
-| D2 | Deploy-marker conditioning | **Measured twice, both published, both missed NFR-8.** v1 (co-occurrence) suppressed everything in quiet windows; v2 (synchrony) attributed almost nothing -- and the diagnosis is that episode start times are quantised to the 10 s window slide, so a 5 s tolerance could only ever match an exact tie. The hypothesis is untested rather than refuted (B-4) |
+| D2 | Deploy-marker conditioning | **Measured three times, all published, all missed NFR-8; the defect behind them is now fixed.** v1 (co-occurrence) suppressed everything in quiet windows; v2 (synchrony) attributed almost nothing; the low-density run showed density was not the problem. All three compared *window boundaries*, quantised to the 10 s slide, so a 5 s tolerance could only match an exact tie. Episodes now carry a true onset (ADR-035) and v3 re-measures with nothing else changed |
 | D3 | Pluggable conditioning interface | **Done** - `ContextSignalSource` with static/Kafka/composite implementations; pipeline and deploy signals share one wire, one schema, one interface |
 | E1 | Explained anomaly (VLM, flagged windows only) | **Built, unverifiable without a key.** Window rendered to a PNG with the flagged span shaded, sent to a hosted OpenAI-compatible endpoint, attached to the episode; bounded off-path queue so a slow endpoint costs detection nothing; every failure is an absence with a reason and never text without a model behind it. 18 tests, success path against a local fake endpoint. NFR-2's latency and the quality of the output need a real key (C-2) |
 | F1 | Safety-gated remediation | **Done** - closed action set, deterministic gate that never reads the rationale, sandbox with a structural interlock, BM25 runbook grounding. 98 tests |
@@ -44,6 +44,7 @@ Phases are from `BUILD.md` section 7; stories from `docs/USER_STORIES.md`.
 | H2 | Chaos suite | **Done** - 5 fault modes including the Flink checkpoint-recovery scenario, all broke 20/20 serviceability samples, all recovered within the 60s budget, drift 0 verified by independent replay. `docs/CHAOS.md`. 18 unit tests |
 | I1 | Honest detection benchmark | **Done, and the foundation model lost.** 144 of 200 series scored (56 dropped by truncation, stated): zscore median AUC-PR 0.198 against chronos-bolt-tiny 0.152, head to head 78/56/10, at **141x less compute**. The regime boundary is named: the model wins where normal is structured and non-stationary (Exathlon 19-8) and loses where an anomaly is a sharp excursion against a flat baseline (SVDB 21-1) |
 | I2 | CI quality gate | **Done for what is measurable without a judge.** CI runs lint, format, unit, integration, a secret scan, repo-standards checks, and `agent_quality.py`: grounding, gate approval, sandbox containment, safety compliance and abstention as rates over 400 episodes, failing on a broken floor or on drift below a committed baseline. 11 tests, most of which break the agent on purpose. Ragas/DeepEval need an LLM judge and a key (C-2) |
+| I3 | Tool-calling fine-tune | **Task reshaped, pipeline built, not trained.** The first set could not beat the rules by construction (B-3); the hard set withholds the label, uses shapes `Diagnoser` misclassifies, and states held-out licences in prose. Measured gap on 300 held-out cases: rules score **0% as deployed**, **20% given licence sets they could not parse**, forbidden action on 61%. QLoRA config, training script and eval complete; `--dry-run` passes against the real tokenizer. **Needs a GPU run** |
 
 ---
 
@@ -55,6 +56,8 @@ Phases are from `BUILD.md` section 7; stories from `docs/USER_STORIES.md`.
 | 2026-09-05 | `4e55212` | **Phase 2 started.** Reconciliation harness: per-channel sequence identity, independent broker-offset audit, per-window health signal on the context topic. Chaos suite: 4 fault modes with recovery verified by independent replay. Scale harness: parallelism sweep over a fixed pre-filled backlog. |
 | 2026-09-06 | `f011835` | **Chaos verified** (4/4, disruption proven), `docs/CHAOS.md`, the paired evaluation harness (`evaluate.py`), and conditioning wired into the detector behind `--conditioning`. |
 | 2026-09-06 | (this commit) | **VLM explainer built** (`src/vigil/explain/`), which `docs/BLOCKERS.md` had already claimed was built. Renders the flagged window as a plot, sends it to a hosted endpoint, attaches the result to the episode, and degrades to a recorded absence on every failure path. Wired into the detector behind a bounded queue. 18 tests. |
+| 2026-09-07 | `66eb56a`, `07ef221` | **The fine-tune task reshaped so a model can win, and the QLoRA pipeline built.** Hard set withholds the symptom and gives per-window evidence; five shapes `Diagnoser` misclassifies; retrieval returns two distractors; held-out licences are prose on disjoint vocabulary. Measured baseline: **0% exact as deployed, 20% given licences, 61% forbidden**. Dry run passes against the real Qwen tokenizer (prompts max 1,261 tokens, 225 steps). Training not run -- ADR-036, B-3 has the cluster command. |
+| 2026-09-07 | `7984331` | **Episodes carry a true onset**, fixing the defect that made v1 and v2 of the conditioning measurement ask a bucket-coincidence question (ADR-035). All 35 episodes in a 420 s scenario now sit off the 10 s grid, spread 0-27 s inside their window. |
 | 2026-09-06 | (this commit) | **Flink exactly-once fault-tested, closing the biggest correctness gap.** TaskManager SIGKILLed mid-checkpoint, held down 60 s: 58/58 samples unhealthy, restored from checkpoint 5, recovered 14.9 s, drift 0, and **328 committed window scores with 0 duplicates**. The first attempt reported 0.1 s and PASS for a job that had not redeployed -- Flink's heartbeat timeout means a dead job reports healthy for ~50 s -- and the health check now requires the vertices to have actually moved. |
 | 2026-09-06 | (this commit) | **200-series benchmark run: the foundation model lost.** zscore median AUC-PR 0.198 vs chronos-bolt-tiny 0.152, 78/56/10 head to head, 59 s vs 8,312 s of compute. Regime boundary measured both ways -- by dataset family and by anomaly density -- and the model's win rate falls from 48% on rare anomalies to 18% when more than a tenth of windows are anomalous. |
 | 2026-09-06 | (this commit) | **One-command demo** (`demo.py`): produce, pause the broker mid-stream, reconcile, detect, remediate; 7/7 claims held. Found and fixed two of its own defects first. |
@@ -164,11 +167,12 @@ ADRs live in `docs/DECISIONS.md`. Design-phase ADR-001..008 predate this build.
 
 ## 5. Next up
 
-**Waiting on the architect:** B-4 -- both conditioning measurements asked a coincidence
-question rather than the intended synchrony question, because episode start times are
-quantised to the window slide. Stop and publish the negative result, or fix the episode
-record and measure a third time. Also B-3, whether the tool-calling fine-tune is worth the
-rented GPU now that the training set is measured to have five distinct targets.
+**Waiting on the architect:** B-3 needs a **GPU run on the university cluster** -- the task is
+reshaped, the pipeline is built and dry-run verified, and the exact four-command run plus the
+hardware requirement are in `docs/BLOCKERS.md`. B-5 needs a decision on whether NFR-3 is
+restated or the window geometry changes. C-2 still needs a VLM key.
+
+B-4 is answered and done: the episode record is fixed (ADR-035) and v3 is being measured.
 
 **In flight:** nothing.
 
