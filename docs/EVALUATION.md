@@ -436,6 +436,18 @@ The live feed's own rate (~242 readings/s on `inverters`, ~4,000/s achievable on
 far below the throughput target. That is a property of the source, not of the pipeline, and is
 exactly why the synthetic harness is retained (ADR-014).
 
+### 5.1z NFR-3, end-to-end detect latency: not measured, and not measurable as written
+
+NFR-3 asks for event-to-flag within 2 s p99. It has not been measured, and it cannot be met
+at this geometry: windows are 30 s sliding by 10 s, so nothing can be flagged before the
+window containing it closes. The floor is one slide at best and one window at worst, against
+a hot-path scoring cost of 0.15 ms p99 -- the requirement is an order of magnitude below its
+own lower bound, and the binding term is the geometry, not the pipeline.
+
+Recorded as B-5 in `docs/BLOCKERS.md` with the options. What the platform actually controls
+-- the delay from a window closing to its episode being raised -- is worth measuring under
+either resolution, and is not yet measured.
+
 ### 5.1a The Phase 1 end-to-end gate run
 
 Loadgen and the detector running against each other, live, for 7 minutes:

@@ -83,6 +83,32 @@ autonomously because `docs/PROGRESS.md` section 5 explicitly said to stop after 
 and because a third attempt after two failures needs to be visibly a defect fix rather than a
 knob turn. If the answer is 1, nothing is lost: the diagnosis is already published.
 
+### B-5. NFR-3 asks for event-to-flag in 2 s, which the window geometry makes impossible. Restate it or change the geometry?
+
+**What was found.** NFR-3 in `docs/REQUIREMENTS.md` reads "Event -> flag in <= 2 s p99". It
+has never been measured and no document discusses it. It also cannot be met as written: the
+detector scores **30-second windows sliding by 10 seconds**, so an event cannot be flagged
+before the window containing it closes. The floor on event-to-flag latency is therefore one
+slide (10 s) at best and one window (30 s) at worst, before any processing cost -- and the
+processing cost itself is 0.15 ms p99. The requirement is five to fifteen times below its own
+lower bound.
+
+**The options.**
+
+1. **Restate NFR-3 as pipeline overhead**: "an episode is raised within 2 s of its window
+   closing". That is the part the platform controls, it is measurable, and the windowing
+   delay is then reported separately as a property of the geometry rather than hidden inside
+   a latency number. Recommended.
+2. **Shrink the geometry to meet the number.** A 2-second window at 1 Hz per channel has two
+   samples in it; a z-score over two samples is noise, and the foundation model has no
+   context to forecast from. This buys the number by destroying what it measures.
+3. **Record NFR-3 as not met** and leave it. Honest, but it leaves a requirement in the spec
+   that nothing can ever satisfy, which is worse than one that is wrong.
+
+**Recommendation: 1.** Not taken autonomously because it edits a requirement rather than an
+implementation, and because the separately-reported windowing delay is a number the architect
+should choose to stand behind. Either way the measurement itself is the same work.
+
 ## Decided by the architect
 
 | # | Question | Decision | Consequence |
