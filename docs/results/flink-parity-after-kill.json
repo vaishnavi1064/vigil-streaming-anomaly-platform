@@ -1,0 +1,10 @@
+{
+  "windows_both": 328,
+  "windows_only_flink": 0,
+  "windows_only_python": 24,
+  "agreement_within_tolerance": 328,
+  "tolerance": 0.5,
+  "abs_diff_median": 2.8377300509419e-13,
+  "abs_diff_max": 7.720046824033489e-12,
+  "signed_bias": -1.1683574162347207e-15
+}

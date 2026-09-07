@@ -126,11 +126,30 @@ Checkpointing over the same run: **30 completed, 2 failed**, average end-to-end 
 283 ms, maximum 2,395 ms, average state size 7.99 MB. The two failures were during job
 startup, before the first successful checkpoint.
 
-**What this does not prove.** The comparison was taken from a job that had not been killed.
-A checkpoint-recovery scenario -- kill the TaskManager mid-checkpoint, verify the
-uncommitted transaction is aborted and replayed, and re-run this comparison afterwards -- is
-the test that would actually exercise two-phase commit. It is **not yet run**, and is listed
-in `docs/CHAOS.md` section 5 as a gap.
+**And now, the same comparison across a crash.** The measurement above was taken from a job
+that had never been killed, which is exactly the objection worth raising against it. So the
+TaskManager was SIGKILLed mid-checkpoint and held down for 60 seconds
+(`docs/CHAOS.md` section 2.1):
+
+| | |
+|---|---|
+| Disruption | **58/58 serviceability samples unhealthy** during the hold |
+| Job behaviour | failed, restarted, **restored from checkpoint 5**; 7 restore cycles while no slots were free |
+| Recovery | **14.9 s** from container restart to redeployed and running |
+| Reconciliation over the stream afterwards | 168,000 readings, **drift 0**, missing 0, duplicates 0 |
+| Committed window scores | **328 distinct (channel, window), 0 duplicates** |
+| Agreement with the Python detector, after the crash | **328/328**, maximum absolute difference 7.7e-12 |
+
+Read with `isolation.level=read_committed`, the scores topic delivered each window exactly
+once across a job that crashed and restored from a checkpoint. Its end offset is 388 against
+those 328 delivered records: the 60-offset gap is transaction control markers, which is what
+a transactional sink looks like from outside.
+
+**What this still does not prove.** One kill, one job, one hold length, one TaskManager. It
+does not establish behaviour under repeated kills, under a kill landing inside the commit
+itself rather than between checkpoints, or across a multi-TaskManager cluster. The claim is
+that this deployment's two-phase commit survived a crash and delivered exactly once -- not
+that it has been exhaustively tested.
 
 ---
 

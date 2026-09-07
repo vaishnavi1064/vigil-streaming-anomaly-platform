@@ -50,6 +50,44 @@ duplicates and zero reordering in every case. Raw results: `docs/results/chaos.j
 NFR-7 asks for at least three fault modes recovering with bounded lag. Four are covered and
 all four clear the budget.
 
+### 2.1 The fifth: killing the Flink TaskManager mid-checkpoint
+
+Run separately, because it needs a job already running and checkpointing and therefore
+cannot reset the topic underneath itself:
+
+```
+docker compose --profile flink up -d
+docker compose --profile flink exec flink-jobmanager flink run -d -py /opt/vigil/scoring_job.py
+python loadgen.py --rate 400 --duration 420 --channels 8
+python chaos.py --fault flink-taskmanager-kill --no-reset --no-loadgen     --settle-s 15 --hold-s 60 --budget-s 120 --report-json docs/results/chaos-flink.json
+python flink_parity.py --report-json docs/results/flink-parity-after-kill.json
+```
+
+| | |
+|---|---|
+| Fault | SIGKILL the TaskManager while the job is checkpointing, hold it down 60 s |
+| Disruption observed | **58/58 serviceability samples unhealthy** |
+| Job behaviour | failed, restarted, and **restored from checkpoint 5**; 7 restore cycles in total while no slots were available |
+| Recovery | **14.9 s** from container restart to redeployed and running (budget 120 s) |
+| Reconciliation over the whole stream afterwards | 168,000 readings, **drift 0**, missing 0, duplicates 0, reordered 0 |
+| Committed window scores | **328 distinct (channel, window), 0 duplicates** |
+| Agreement with the Python detector | 328/328 within tolerance, maximum absolute difference **7.7e-12** |
+
+The topic's end offset is 388 against 328 delivered records; the 60-record difference is
+transaction control markers, which occupy offsets but are never handed to a `read_committed`
+consumer. That gap is what the transactional sink looks like from outside.
+
+**This is the scenario that exercises two-phase commit**, and it is the one that was missing
+when `docs/CORRECTNESS.md` said the exactly-once claim rested on configuration rather than on
+evidence from this deployment. A job that crashed seven times, restored from a checkpoint,
+and still delivered exactly one committed score per window is that evidence.
+
+Hold length matters here and 60 s is not arbitrary: Flink notices a dead TaskManager by
+heartbeat timeout, which is tens of seconds. A shorter hold restarts the container before the
+JobManager has registered the failure, and the job never redeploys -- so the scenario would
+be testing container restart, not checkpoint recovery. Section 4 has what that looked like
+when it went wrong.
+
 ---
 
 ## 3. Why these four, and how they differ
@@ -75,10 +113,13 @@ down":
 
 ---
 
-## 4. Two bugs this suite found in itself
+## 4. Three bugs this suite found in itself
 
 Recorded because they are the reason the numbers above can be trusted, and because a chaos
 suite that cannot be wrong is not measuring anything.
+
+All three had the same shape: a scenario reporting success for something it had not
+measured.
 
 **The first run reported 4/4 and three of them were meaningless.** Only `broker-kill` had
 actually disrupted anything: the producer logged no errors at all during the broker pause or
@@ -101,6 +142,21 @@ has not recovered, and a liveness check would have called it recovered. Unknown 
 reported as unknown rather than treated as zero. That change is why its recovery time went
 from a meaningless 0.0 s to a real 25.1 s.
 
+**The Flink scenario reported 0.1 s recovery, and PASS, for a job that had not recovered.**
+Its health check asked the JobManager whether the job was RUNNING with every task running.
+It was -- because Flink detects a dead TaskManager by heartbeat timeout, and for the tens of
+seconds before that fires, the JobManager's view of a job whose tasks are already dead is
+indistinguishable from a healthy one. Every condition the check tested was true, and none of
+them meant anything. The job actually redeployed about 50 seconds later, restoring from
+checkpoint 6, long after the scenario had declared victory.
+
+The fix is to record the vertex deployment timestamps at injection and require them to have
+*moved* before calling it recovered: a job that never redeployed has not recovered, however
+healthy it claims to be. Injecting onto a cluster with no running job is now refused outright
+for the same reason -- killing an idle TaskManager proves nothing about checkpoint recovery.
+Three regression tests cover the stale RUNNING state, tasks still deploying, and the empty
+cluster.
+
 ---
 
 ## 5. What this does not cover
@@ -112,9 +168,10 @@ Stated plainly, because the gaps matter as much as the results:
   The recovery times above are single-node recovery times and do not project to a cluster.
 - **No disk-full or corruption faults.** The suite kills and isolates processes; it does not
   corrupt a log segment or exhaust a volume.
-- **No Flink faults yet.** These scenarios run against the Python consumer. The Flink job's
-  checkpoint-recovery path -- kill the TaskManager mid-checkpoint, verify the transaction is
-  aborted and replayed -- is a separate scenario and is **not yet run**.
+- **The Flink scenario was run once, on one job, at one hold length.** It is real evidence
+  (section 2.1) but it is a single observation: one kill, one checkpoint restore, 328
+  windows. It does not establish behaviour under repeated kills, under a kill during the
+  commit itself rather than between checkpoints, or with more than one TaskManager.
 - **The producer absorbed every outage from its retry buffer.** Zero readings were lost in
   any scenario, which is the correct result at these durations, but it means the suite has
   not yet found the hold length at which the producer's buffer overflows and loss becomes

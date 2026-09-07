@@ -116,7 +116,7 @@ Recorded here rather than only in the docs that would flatter themselves by omit
 
 | # | Gap | Where it is stated |
 |---|---|---|
-| G-1 | The Flink exactly-once path has **never been fault-tested**. The job runs and its output is bit-identical to the reference, but nothing has killed it mid-checkpoint. The 2PC claim currently rests on configuration and on Flink's own guarantees, not on evidence from this deployment. The scenario exists (`chaos.py --fault flink-taskmanager-kill`) and has not been run. | `docs/CORRECTNESS.md` section 6, `docs/CHAOS.md` section 5 |
+| G-1 | ~~The Flink exactly-once path has never been fault-tested.~~ **Closed 2026-09-06.** The TaskManager was SIGKILLed mid-checkpoint and held down 60 s: 58/58 samples unhealthy, job restored from checkpoint 5 across 7 restore cycles, recovered in 14.9 s, and a `read_committed` consumer saw **328 distinct window scores with 0 duplicates**. Still one kill, one job, one TaskManager. | `docs/CHAOS.md` section 2.1, `docs/CORRECTNESS.md` section 3a |
 | G-2 | **Zero drift is measured over minutes, not hours.** NFR-6 asks for >= 4 hours; the longest clean run is 15 minutes (360,000 readings, drift 0, offset drift 0). | `docs/CORRECTNESS.md` sections 1 and 6 |
 | G-3 | The chaos suite's producer absorbed every outage from its retry buffer, so the hold length at which loss becomes unavoidable has not been found. Finding that boundary would be a stronger result than not reaching it. | `docs/CHAOS.md` section 5 |
 | G-4 | Single broker at replication factor 1: no leader election, no ISR shrink, no partial-availability case. Recovery times do not project to a cluster. | `docs/CHAOS.md` section 5 |

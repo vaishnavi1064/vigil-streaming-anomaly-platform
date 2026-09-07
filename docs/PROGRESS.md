@@ -29,7 +29,7 @@ Phases are from `BUILD.md` section 7; stories from `docs/USER_STORIES.md`.
 | Story | Title | Status |
 |---|---|---|
 | A1 | Durable ingestion (gap-detect + backfill) | **Done, scope corrected** - live MQTT source + gap detection. Backfill is impossible on this feed; edge guarantee restated as at-most-once (ADR-011) |
-| A2 | Exactly-once processing (Flink, 2PC) | **Running, parity proven, never fault-tested** - PyFlink job with event-time watermarks, RocksDB, incremental + unaligned checkpoints, transactional Kafka sink. Submitted and verified: 1,056 windows scored, differences of exactly 0.0000 against the Python detector, 30 checkpoints at an average 283 ms. Nothing has yet killed it mid-checkpoint (gap G-1) |
+| A2 | Exactly-once processing (Flink, 2PC) | **Done, and now fault-tested.** Killed mid-checkpoint, restored from checkpoint 5, recovered in 14.9 s, and a read_committed consumer saw 328 distinct window scores with **0 duplicates**. Parity after the crash: 328/328, max difference 7.7e-12. Single kill, single TaskManager (see CHAOS section 5) |
 | B1 | Reconciliation harness | **Done** - per-channel sequence identity + independent broker-offset audit. Measured drift 0 over 252,000 readings. 42 tests |
 | B2 | Pipeline-health signal | **Done** - per-window `PipelineHealth` on `ops.context` as `kind=pipeline`, same wire and schema as a deploy marker (ADR-003). Emitted for clean windows too, so 'clean' is distinguishable from 'no signal' |
 | C1 | Z-score baseline detector | **Done** - Welford, decayed reference, mean + dispersion, 18 tests |
@@ -41,7 +41,7 @@ Phases are from `BUILD.md` section 7; stories from `docs/USER_STORIES.md`.
 | F1 | Safety-gated remediation | **Done** - closed action set, deterministic gate that never reads the rationale, sandbox with a structural interlock, BM25 runbook grounding. 98 tests |
 | G1 | Live dashboard | **Done** - episodes, per-detector comparison, latency vs. budget, and the reconciliation panel story G1 calls Must: ledger drift beside the independent broker-offset audit, per-window health with grades. Still refuses to render numbers when no run has happened. Screenshot-verified light and dark, 14 API tests |
 | H1 | Throughput harness | **Done** - producer 76,556 ev/s blast; consumer-side curve measured over a 3.9 M backlog: 94,495/s at one consumer, plateau **170,414/s at 3-6 consumers** over 6 partitions. NFR-4 met (20,000 target); NFR-5's near-linear claim **not** met, 1.80x at 6 consumers. `docs/SCALE.md` |
-| H2 | Chaos suite | **Done** - 4 fault modes, all broke 20/20 serviceability samples, all recovered within the 60s budget, drift 0 verified by independent replay. `docs/CHAOS.md`. 18 unit tests |
+| H2 | Chaos suite | **Done** - 5 fault modes including the Flink checkpoint-recovery scenario, all broke 20/20 serviceability samples, all recovered within the 60s budget, drift 0 verified by independent replay. `docs/CHAOS.md`. 18 unit tests |
 | I1 | Honest detection benchmark | **Done, and the foundation model lost.** 144 of 200 series scored (56 dropped by truncation, stated): zscore median AUC-PR 0.198 against chronos-bolt-tiny 0.152, head to head 78/56/10, at **141x less compute**. The regime boundary is named: the model wins where normal is structured and non-stationary (Exathlon 19-8) and loses where an anomaly is a sharp excursion against a flat baseline (SVDB 21-1) |
 | I2 | CI quality gate | **Done for what is measurable without a judge.** CI runs lint, format, unit, integration, a secret scan, repo-standards checks, and `agent_quality.py`: grounding, gate approval, sandbox containment, safety compliance and abstention as rates over 400 episodes, failing on a broken floor or on drift below a committed baseline. 11 tests, most of which break the agent on purpose. Ragas/DeepEval need an LLM judge and a key (C-2) |
 
@@ -54,6 +54,7 @@ Phases are from `BUILD.md` section 7; stories from `docs/USER_STORIES.md`.
 | 2026-09-05 | `67630bb` | **Phase 1 gate passed.** Wrote `docs/CORRECTNESS.md` (guarantee per boundary + what is not covered), filled `docs/EVALUATION.md` sections 5.1a-5.1d with measured numbers, wrote `README.md`. |
 | 2026-09-05 | `4e55212` | **Phase 2 started.** Reconciliation harness: per-channel sequence identity, independent broker-offset audit, per-window health signal on the context topic. Chaos suite: 4 fault modes with recovery verified by independent replay. Scale harness: parallelism sweep over a fixed pre-filled backlog. |
 | 2026-09-06 | `f011835` | **Chaos verified** (4/4, disruption proven), `docs/CHAOS.md`, the paired evaluation harness (`evaluate.py`), and conditioning wired into the detector behind `--conditioning`. |
+| 2026-09-06 | (this commit) | **Flink exactly-once fault-tested, closing the biggest correctness gap.** TaskManager SIGKILLed mid-checkpoint, held down 60 s: 58/58 samples unhealthy, restored from checkpoint 5, recovered 14.9 s, drift 0, and **328 committed window scores with 0 duplicates**. The first attempt reported 0.1 s and PASS for a job that had not redeployed -- Flink's heartbeat timeout means a dead job reports healthy for ~50 s -- and the health check now requires the vertices to have actually moved. |
 | 2026-09-06 | (this commit) | **200-series benchmark run: the foundation model lost.** zscore median AUC-PR 0.198 vs chronos-bolt-tiny 0.152, 78/56/10 head to head, 59 s vs 8,312 s of compute. Regime boundary measured both ways -- by dataset family and by anomaly density -- and the model's win rate falls from 48% on rare anomalies to 18% when more than a tenth of windows are anomalous. |
 | 2026-09-06 | (this commit) | **One-command demo** (`demo.py`): produce, pause the broker mid-stream, reconcile, detect, remediate; 7/7 claims held. Found and fixed two of its own defects first. |
 | 2026-09-06 | (this commit) | **Agent quality gate built and wired into CI.** Structural rates only, since the judged metrics need a key: 400 episodes, 1,267 actions, 100% grounded / gate-approved / sandboxed, 97.1% citing a runbook. Fails on a broken floor or on drift below the committed baseline -- and the baseline is what catches a planner that escalates everything, which breaks no floor at all. |
@@ -169,10 +170,8 @@ rented GPU now that the training set is measured to have five distinct targets.
 
 1. Re-run the benchmark without truncation, so the 56 late-onset series are not excluded
    (est. 4+ h of CPU).
-2. Flink checkpoint-recovery chaos run (`chaos.py --fault flink-taskmanager-kill`, needs the
-   flink profile up) -- this is the scenario that actually exercises two-phase commit.
-3. Multi-hour soak for NFR-6. Must run after chaos and scale.
-4. VLM explanation (blocked on C-2, needs a key), ClickHouse and Iceberg, Terraform and K8s.
+2. Multi-hour soak for NFR-6. Must run after chaos and scale.
+3. VLM explanation (blocked on C-2, needs a key), ClickHouse and Iceberg, Terraform and K8s.
 
 ## 6. Phase 1 gate evidence
 
