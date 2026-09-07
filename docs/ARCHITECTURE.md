@@ -25,7 +25,10 @@ rare-path, off the hot path.
 3. **Detection** scores each window (baseline + foundation model).
 4. **Reconciliation** emits a per-window pipeline-health signal in parallel.
 5. **Conditioning** joins each anomaly flag with overlapping context signals (pipeline health,
-   deploy markers) and decides: *real* vs. *attributed-to-context*.
+   deploy markers) and decides: *real* vs. *attributed-to-context*. The verdict is held
+   behind an event-time barrier keyed to the fleet watermark, so it is taken once every
+   channel has passed the span it asks about rather than against whichever episodes closed
+   first (ADR-037).
 6. Real anomalies → episode → (VLM explanation) → agent (diagnose/gate/execute) → dashboard.
    Attributed anomalies → recorded, not paged.
 
@@ -33,12 +36,18 @@ rare-path, off the hot path.
 The novelty lives in one join and one policy.
 
 - **Context signal (contract).** `{window_id, t_start, t_end, kind: pipeline|deploy|…, severity, detail}`. Sources: the reconciliation harness (pipeline) and a deploy-marker feed. Extensible — new kinds implement the same `ContextSignalSource` interface (FR-9).
-- **Conditioning policy.** Input: an anomaly flag for window *T* plus all context signals overlapping *T*. Output: `{status: real | attributed, attributed_to, adjusted_score}`. v1 policy: if a pipeline disturbance or active deploy overlaps *T*, mark the flag attributed (not paged); else real.
+- **Conditioning policy.** Input: an episode plus every context signal overlapping it, and the fleet inventory. Output: `{status: real | attributed, attributed_to, verdict, reason}`. The naive rule this section originally specified -- attribute anything overlapping a deploy -- is blanket suppression, and it was built, measured and rejected: it destroyed recall on exactly the population ADR-015 exists to catch (`docs/EVALUATION.md` section 3.4, v1). What runs is four tests, each of which can only ever *refuse*:
+  1. **Scope** (ADR-024). A deploy that never touched this channel cannot explain it.
+  2. **Mechanism** (ADR-024). A pipeline event that lost nothing, duplicated nothing and reordered nothing has no way to have distorted a value, whatever its severity says.
+  3. **Corroboration** (ADR-024, ADR-025). The channel's in-scope siblings must have departed within a few seconds of it, compared on true onsets rather than window boundaries (ADR-035).
+  4. **Blast radius** (ADR-038). The channels that moved must have the *shape* of the rollout rather than of a failure domain: spread across machines and cabinets, not confined to one. A machine failing is synchronous inside its own scope, so tests 1 to 3 cannot separate it from a rollout and this is what does.
+- **Fleet inventory.** `channel -> {node, rack, deploy ring}`, read from a CMDB (here, written by the load generator). Operational fact, carrying nothing about whether anything is wrong. Absent, the blast-radius test raises no objection rather than refusing everything.
 - **Fail-open rule (safety).** If the health signal is **unavailable**, conditioning falls back to *unconditioned* — flags are raised normally, never silently suppressed. Missing context must not hide a real anomaly. (See ADR-007.)
 
 ## 5. Key interfaces & schemas
 - **Pipeline-health signal** (Kafka topic / API): per window — drift count, lag, gap-fills, duplicates, `disturbed: bool`, severity.
 - **ContextSignalSource** (pluggable): `get_signals(window) -> [ContextSignal]`.
+- **FleetTopology** (inventory): `footprint(channels) -> {nodes, racks, rings, unplaced}`.
 - **Episode** (Postgres): see §6.
 
 ## 6. Data model

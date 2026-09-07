@@ -632,6 +632,22 @@ discriminator fires where the topology has structure and is inert where it does 
 which is what it claims to do, and both fleet widths are published so the claim is bounded
 by the width it was measured at.
 
+**The 24-channel ablation replicates.** An earlier run of the same configuration, before the
+verdict-record fix, is kept at
+`docs/results/paired-evaluation-v4w-topology-wide-prefix-g16.json`. Its episodes and window
+boundaries differ -- 139 against 147 -- but the ablation points the same way and by nearly
+the same amount:
+
+| 24-channel run | timing only | with blast radius | recall loss saved | reduction given up |
+|---|---|---|---|---|
+| earlier (139 episodes) | +11.1% / -6.7% | +6.1% / **-0.0%** | 6.7 pts | 5.0 pts |
+| published (147 episodes) | +8.0% / -6.7% | +3.6% / **-3.3%** | 3.4 pts | 4.4 pts |
+
+Two independent runs, the same trade in the same direction. That is weaker evidence than a
+seed sweep and stronger than one run, and it is stated as exactly that. The 12-channel
+ablation does **not** replicate -- the sign of its reduction delta flips between runs -- which
+is consistent with a test that fires once there and is therefore measuring noise.
+
 ### 3.11 All seven measurements, and what v4 settles
 
 | Run | What changed | FP reduction | Recall loss | Quiet-window recall | NFR-8 |
