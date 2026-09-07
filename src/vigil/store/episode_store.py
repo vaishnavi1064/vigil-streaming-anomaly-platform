@@ -135,6 +135,17 @@ class EpisodeStore:
             ),
         )
 
+    def attach_explanation(self, episode_id: int, text: str) -> bool:
+        """Attach an explanation to an episode already written. Returns whether it landed.
+
+        Separate from `record_episode` because the explanation arrives later, from another
+        thread, and long after the episode was durable -- and because an episode that never
+        gets one must remain a complete episode rather than an incomplete write.
+        """
+        with self._conn.cursor() as cur:
+            cur.execute("UPDATE episodes SET explanation = %s WHERE id = %s", (text, episode_id))
+            return cur.rowcount == 1
+
     def recent_episodes(self, limit: int = 50) -> list[dict]:
         with self._conn.cursor() as cur:
             cur.execute(

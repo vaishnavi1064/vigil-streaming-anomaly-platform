@@ -109,3 +109,34 @@ class MqttSettings:
             port=required_int("MQTT_PORT"),
             topic=required("MQTT_TOPIC"),
         )
+
+
+@dataclass(frozen=True)
+class VlmSettings:
+    """The hosted explainer endpoint (ADR-004, B-1).
+
+    Every field is optional, which is the opposite of every other settings class here and is
+    deliberate. The rest of the platform fails loudly on a missing variable because it cannot
+    do its job without one. The explainer can: with no key it reports itself unavailable,
+    detection is untouched, and the episode simply carries no explanation. Making these
+    required would turn a missing API key into a dead pipeline.
+    """
+
+    endpoint: str
+    api_key: str
+    model: str
+    timeout_s: float = 20.0
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.endpoint and self.api_key and self.model)
+
+    @classmethod
+    def from_env(cls) -> VlmSettings:
+        load_env()
+        return cls(
+            endpoint=os.environ.get("VLM_ENDPOINT", "").strip(),
+            api_key=os.environ.get("VLM_API_KEY", "").strip(),
+            model=os.environ.get("VLM_MODEL", "").strip(),
+            timeout_s=float(os.environ.get("VLM_TIMEOUT_S", "20").strip() or 20),
+        )

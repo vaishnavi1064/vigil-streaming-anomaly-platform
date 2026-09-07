@@ -113,7 +113,7 @@ should choose to stand behind. Either way the measurement itself is the same wor
 
 | # | Question | Decision | Consequence |
 |---|---|---|---|
-| B-1 | How should the VLM explainer be served, given 4 GB of VRAM and no API key? | **Hosted endpoint behind env vars** (`VLM_ENDPOINT`, `VLM_API_KEY`, `VLM_MODEL`). | The explainer is built in full against that interface. With no key set it reports itself unavailable and detection is unaffected -- the documented degradation, not a stub pretending to work. Explanations appear the moment a key is supplied, and NFR-2's 5 s budget is measured against the real endpoint rather than assumed. Cost accepted: a per-flagged-window API cost and a third-party dependency on the rare path only. |
+| B-1 | How should the VLM explainer be served, given 4 GB of VRAM and no API key? | **Hosted endpoint behind env vars** (`VLM_ENDPOINT`, `VLM_API_KEY`, `VLM_MODEL`). | Built against that interface on 2026-09-06 -- this row previously said so before it was true. With no key set it reports itself unavailable and detection is unaffected -- the documented degradation, not a stub pretending to work. Explanations appear the moment a key is supplied, and NFR-2's 5 s budget is measured against the real endpoint rather than assumed. Cost accepted: a per-flagged-window API cost and a third-party dependency on the rare path only. |
 | B-2 | Is the QLoRA fine-tune worth attempting on this hardware? | **A GPU will be rented**, so the fine-tune proceeds as the plan specifies. **Reopened as B-3** now that the dataset is built and its target entropy measured. | The dataset builder and training script are written now so the rented time is spent training rather than authoring. Until the GPU is available the agent runs the deterministic planner, which stays as the baseline the fine-tuned model is measured against rather than merely replaced by. |
 
 ## Defaulted (proceeding under a recorded assumption)
@@ -132,7 +132,7 @@ should choose to stand behind. Either way the measurement itself is the same wor
 | # | Constraint | Affects | Status |
 |---|---|---|---|
 | C-1 | RTX 3050 Ti Laptop, 4 GB VRAM. A 7–8B model will not fit at fp16. | Phase 4 VLM, Phase 5 QLoRA | **Resolved by B-1 and B-2**: VLM served remotely, fine-tune on rented hardware |
-| C-2 | No API key of any kind in the environment. | Phase 4 VLM | **Waiting on a key.** The explainer is built and its unavailable path is tested; it produces explanations as soon as `VLM_API_KEY` is set |
+| C-2 | No API key of any kind in the environment. | Phase 4 VLM, Phase 5 judged eval | **Waiting on a key.** The explainer is now genuinely built (`src/vigil/explain/`, wired into the detector, 18 tests including the success path against a local fake endpoint) and reports itself unavailable with no key. Two things stay unmeasured until a key exists: NFR-2's 5 s budget against a real endpoint, and whether the explanations are any good, which needs a judge |
 | C-3 | Docker VM has 8.1 GB of the machine's 15.6 GB. | Phases 2–3 | Managed: Flink is behind a compose profile so JobManager + TaskManager (~2.5 GB) are started deliberately rather than always. ClickHouse and MinIO will need the same treatment. |
 | C-4 | Long-running measurements (the >= 4 h soak, the 200-series benchmark, the parallelism sweep) each need the machine to themselves. | Phases 2, 5 | Sequenced rather than parallel. The soak must run after chaos and scale, both of which deliberately break or saturate the stack. |
 

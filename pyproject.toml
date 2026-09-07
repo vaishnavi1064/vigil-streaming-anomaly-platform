@@ -20,6 +20,12 @@ foundation = [
     "torch>=2.4",
     "chronos-forecasting>=1.5",
 ]
+explain = [
+    # The VLM explainer renders a flagged window as a plot and sends it to a hosted
+    # endpoint (ADR-004, B-1). Nothing here loads a model locally.
+    "matplotlib>=3.9",
+    "httpx>=0.27",
+]
 dev = [
     "pytest>=8.3",
     "pytest-timeout>=2.3",

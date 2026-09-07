@@ -25,7 +25,7 @@ import signal
 import sys
 import threading
 import time
-from collections import Counter
+from collections import Counter, deque
 
 from confluent_kafka import Consumer, KafkaError, TopicPartition
 
@@ -39,12 +39,30 @@ from vigil.detectors.foundation import ChronosResidualDetector, FoundationModelU
 from vigil.detectors.offpath import OffPathScorer
 from vigil.detectors.zscore import RollingZScoreDetector
 from vigil.episodes import EpisodeBuilder, EpisodeStatus
+from vigil.explain import ExplanationRequest, ExplanationWorker, VlmExplainer
 from vigil.readings import Reading
-from vigil.settings import KafkaSettings, PostgresSettings
+from vigil.settings import KafkaSettings, PostgresSettings, VlmSettings
 from vigil.store import EpisodeStore
 from vigil.windows import SlidingWindowAssigner
 
 log = logging.getLogger("vigil.detector")
+
+
+def _attach_explanation(store, episode_id: int, result) -> None:
+    """Write an explanation from the worker thread. Absence is recorded, not silent.
+
+    A failed or skipped explanation writes nothing rather than writing its reason into the
+    episode: `explanation` is what an operator reads, and filling it with "no API key" would
+    put an infrastructure note where a description of the anomaly belongs. The reason lives
+    in the log and in the explainer's counters.
+    """
+    if not result.available:
+        log.info("episode %s carries no explanation: %s", episode_id, result.reason)
+        return
+    try:
+        store.attach_explanation(episode_id, result.text)
+    except Exception:  # noqa: BLE001 - an explanation is never worth failing a run over
+        log.exception("could not attach explanation to episode %s", episode_id)
 
 
 class DetectionSpine:
@@ -65,6 +83,8 @@ class DetectionSpine:
         foundation_threshold: float = 6.0,
         foundation_batch: int = 32,
         conditioning: ConditioningPolicy | None = None,
+        explanation_worker: ExplanationWorker | None = None,
+        explain_history_s: float = 300.0,
     ) -> None:
         self.store = store
         self.windows = SlidingWindowAssigner(
@@ -83,6 +103,13 @@ class DetectionSpine:
         # every conditioned result is measured against (ADR-016).
         self.conditioning = conditioning
         self.attributed = 0
+
+        # Per-channel sample history, kept only when there is somewhere to send it. An
+        # explainer that is not configured must not cost the hot path a deque per channel:
+        # the picture is for the rare path, and the rare path is off.
+        self.explanation_worker = explanation_worker
+        self.explain_history_s = explain_history_s
+        self._history: dict[str, deque[tuple[int, float]]] = {}
 
         # The foundation model keeps its own episode builder rather than annotating the
         # baseline's. The two detectors score on different scales and disagree, and the
@@ -121,6 +148,8 @@ class DetectionSpine:
     def consume(self, reading: Reading) -> list[int]:
         """Feed one reading; returns the ids of any episodes this closed and persisted."""
         self.readings_seen += 1
+        if self.explanation_worker is not None:
+            self._remember(reading)
         written: list[int] = []
         for window in self.windows.add(reading):
             score = self.baseline.score(window)
@@ -170,6 +199,44 @@ class DetectionSpine:
                     written.append(self._persist(episode))
         return written
 
+    def _remember(self, reading: Reading) -> None:
+        """Keep a bounded window of recent samples per channel, for the plot.
+
+        Bounded by *time* rather than by count, because channels report at different rates
+        and a fixed-length deque would give a fast channel ten seconds of context and a slow
+        one an hour.
+        """
+        history = self._history.get(reading.channel)
+        if history is None:
+            history = deque()
+            self._history[reading.channel] = history
+        history.append((reading.event_ts_ms, reading.value))
+        cutoff = reading.event_ts_ms - int(self.explain_history_s * 1000)
+        while history and history[0][0] < cutoff:
+            history.popleft()
+
+    def _request_explanation(self, episode_id: int, episode) -> None:
+        """Hand a flagged episode to the explainer. Never blocks, never raises.
+
+        Only episodes that would actually page someone: an attributed episode has already
+        been explained by the context event it was attributed to, and paying for a picture of
+        one would be paying to explain something twice.
+        """
+        if self.explanation_worker is None or episode.status is not EpisodeStatus.REAL:
+            return
+        history = self._history.get(episode.channel)
+        if not history:
+            return
+        snapshot = list(history)
+        self.explanation_worker.submit(
+            ExplanationRequest(
+                episode_id=episode_id,
+                episode=episode,
+                timestamps_ms=[t for t, _ in snapshot],
+                values=[v for _, v in snapshot],
+            )
+        )
+
     def _persist(self, episode) -> int:
         if self.conditioning is not None:
             # Record the flag before deciding, so an episode's in-scope siblings are already
@@ -208,6 +275,9 @@ class DetectionSpine:
             episode.window_count,
             ",".join(episode.injected_origins) or "-",
         )
+        # After the episode is durable, never before: an explanation that arrived first
+        # would have nothing to attach to, and the write is what makes the episode real.
+        self._request_explanation(episode_id, episode)
         return episode_id
 
     @staticmethod
@@ -306,6 +376,25 @@ def run(args: argparse.Namespace) -> int:
             ),
         )
 
+    # The explainer is built whether or not it is configured, so its counters report how
+    # many flagged windows *would* have been explained. Off entirely with --no-explain.
+    explanation_worker = None
+    if not args.no_explain:
+        explainer = VlmExplainer(settings=VlmSettings.from_env())
+        if explainer.available:
+            explanation_worker = ExplanationWorker(
+                explainer,
+                lambda episode_id, result: _attach_explanation(store, episode_id, result),
+                max_pending=args.explain_queue,
+            )
+            explanation_worker.start()
+            log.info("explainer configured against %s", explainer.settings.model)
+        else:
+            log.info(
+                "explainer not configured (VLM_ENDPOINT / VLM_API_KEY / VLM_MODEL); "
+                "episodes will carry no explanation and detection is unaffected"
+            )
+
     spine = DetectionSpine(
         store,
         window_ms=args.window_ms,
@@ -319,6 +408,8 @@ def run(args: argparse.Namespace) -> int:
         foundation_threshold=args.foundation_threshold,
         foundation_batch=args.foundation_batch,
         conditioning=conditioning,
+        explanation_worker=explanation_worker,
+        explain_history_s=args.explain_history_s,
     )
 
     consumer = build_consumer(bootstrap, args.group, args.from_beginning)
@@ -564,6 +655,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="how close together in-scope channels must move to count as moving together. "
         "A deploy artifact blips its channels at the same instant; independent faults in "
         "the same window are not synchronised",
+    )
+
+    e = p.add_argument_group("explanation (rare path, ADR-004)")
+    e.add_argument(
+        "--no-explain",
+        action="store_true",
+        help="do not build the explainer at all. Without it the explainer still only runs "
+        "when VLM_ENDPOINT, VLM_API_KEY and VLM_MODEL are all set",
+    )
+    e.add_argument(
+        "--explain-history-s",
+        type=float,
+        default=300.0,
+        help="how much history to plot around a flagged window, in seconds",
+    )
+    e.add_argument(
+        "--explain-queue",
+        type=int,
+        default=32,
+        help="pending explanations before new ones are dropped and counted",
     )
 
     f = p.add_argument_group("foundation model (off the critical path, ADR-017)")
