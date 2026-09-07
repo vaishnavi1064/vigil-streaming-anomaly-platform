@@ -153,6 +153,10 @@ ADRs live in `docs/DECISIONS.md`. Design-phase ADR-001..008 predate this build.
 | 027 | The gate never reads the agent's rationale | 4 |
 | 028 | An attributed episode gets no remediation | 4 |
 | 029 | BM25 for runbook retrieval, not embeddings | 4 |
+| 030 | An agent that can propose nothing escalates instead of falling silent | 4 |
+| 031 | The training set's abstention population is constructed, and says so | 5 |
+| 032 | The CI quality gate measures structure, not judgement, and says which | 5 |
+| 033 | A chaos scenario must prove recovery happened, not just that health returned | 2 |
 
 ---
 
