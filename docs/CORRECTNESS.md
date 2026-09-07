@@ -15,7 +15,7 @@
 | Kafka -> detector | **at-least-once** | Offsets commit after episodes are durable, so a crash replays rather than loses | Built |
 | Detector -> Postgres | **effectively-once** | The sink upserts on `(channel, t_start_ms, raised_by)`, so a replay re-derives the same rows instead of duplicating them | Built |
 | Inside Flink | **exactly-once** via 2PC: source offsets in the checkpoint, sink writes in a Kafka transaction committed on checkpoint completion, stable transactional-id prefix for epoch fencing | — | Built, running |
-| Reconciliation drift = 0 over a multi-hour run | — | — | **Not yet run.** Measured at zero over a 15-minute run; the >= 4-hour soak NFR-6 asks for has not been done |
+| Reconciliation drift = 0 over a multi-hour run | reconciliation harness, 4-hour soak | **Met.** 5,749,412 readings across 12 channels over 240.0 minutes: drift 0, missing 0, duplicates 0, reordered 0. The independent broker audit reports +77 (see below) |
 
 The end-to-end claim today is therefore: **at-most-once at the edge, exactly-once into the
 Kafka log, exactly-once through the Flink job, effectively-once at the episode sink.** It is
@@ -199,6 +199,42 @@ duplicate *episodes*, and the sweep is a direct test of it: six drains of the sa
 wrote into the same schema and left **54 episodes with zero duplicate
 `(channel, t_start_ms, raised_by)` groups**. Without the constraint those six replays would
 have produced drift attributable to nothing but our own bookkeeping.
+
+### The 4-hour soak, and the +77 in its audit
+
+NFR-6 asks for reconciliation drift of zero over a run of at least four hours. Run
+2026-09-07:
+
+```
+python reconciler.py --from-beginning --duration 14400 --report-interval 900     --report-json docs/results/reconciliation-soak.json
+python loadgen.py --rate 400 --duration 14400 --channels 12
+```
+
+| | |
+|---|---|
+| Duration | **240.0 minutes** |
+| Readings reconciled | **5,749,412** across 12 channels |
+| Ledger drift | **0** |
+| Missing / duplicate / reordered | **0 / 0 / 0** |
+| Health windows | 480, **0 disturbed** |
+| Drift at every 15-minute checkpoint | **0**, all sixteen of them |
+| Broker offset audit | 5,749,489 retained against 5,749,412 consumed: **+77** |
+
+**The +77 is a shutdown boundary, not loss, and here is why that is not special pleading.**
+Both processes were given the same 14,400-second duration and the consumer started about
+twenty-six seconds first, so the consumer's clock expired while the producer was still
+producing. At the instant of the audit, 77 records had reached the broker and had not yet
+been polled -- about two tenths of a second of production at 400 ev/s. The producer went on
+to deliver 5,760,000 in total, and the broker's log end was verified afterwards at exactly
+that figure, which is what confirms the reading: the consumer stopped first.
+
+The per-channel ledger is unaffected by this, and it is the ledger that carries the
+zero-drift claim: every channel's sequence was contiguous over everything consumed, with
+nothing missing, duplicated or reordered. The shorter runs, which stop the producer first
+and let the consumer drain on `--stop-after-idle-s`, report offset drift of exactly +0 --
+and that is the cleaner protocol. Using a fixed duration on both sides for the soak means
+its audit is taken mid-stream, which is a property of how the run was launched rather than
+of the pipeline.
 
 ---
 

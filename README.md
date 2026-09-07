@@ -29,7 +29,7 @@ below comes from a command recorded in `docs/EVALUATION.md`.
 | Scaling | 1.80x at six consumers, efficiency 30%. **NFR-5's near-linear claim: not met** |
 | Hot-path detection latency, p99 | **0.49 ms** (NFR-1 budget: 250 ms) |
 | Foundation model, off critical path, p99 | 34.8 ms amortised per window |
-| Reconciliation drift | **0** over 360,000 readings, verified by independent broker-offset audit |
+| Reconciliation drift | **0** over **5,749,412 readings and 4 hours** (NFR-6), verified against an independent broker-offset audit |
 | Chaos | **5/5** fault modes recovered to a verified consistent state, each proven to have disrupted something |
 | Flink parity | 1,056 windows scored, differences of exactly **0.0000** against the Python detector, 30 checkpoints at 283 ms average |
 | Flink exactly-once, **across a crash** | TaskManager SIGKILLed mid-checkpoint: restored from checkpoint 5, recovered in **14.9 s**, and a `read_committed` consumer saw **328 window scores with 0 duplicates** |
@@ -40,8 +40,9 @@ below comes from a command recorded in `docs/EVALUATION.md`.
 | Tests | **524** (unit, plus integration against real Kafka, Postgres and a live Flink cluster) |
 
 What these numbers are **not**. The producer and consumer figures were taken separately, so
-neither is an end-to-end throughput claim. Zero drift is measured over 15 minutes, not the
-four hours NFR-6 asks for. The exactly-once evidence is one kill of one job on one
+neither is an end-to-end throughput claim. The soak's broker audit shows +77 records retained
+but unpolled at the instant the consumer's clock expired -- a shutdown boundary, not loss,
+explained in `docs/CORRECTNESS.md`. The exactly-once evidence is one kill of one job on one
 TaskManager, not an exhaustive test. The benchmark scored 144 of 200 series -- truncation
 excluded the late-onset half -- and used Chronos-Bolt at its smallest size. And the
 conditioning result is a **failure, published as one**: the second attempt turned out to be
