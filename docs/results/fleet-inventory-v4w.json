@@ -1,0 +1,148 @@
+{
+  "placements": [
+    {
+      "channel": "pump-00.bearing_temp_c",
+      "node": "pump-00",
+      "rack": "rack-00",
+      "ring": "ring-00"
+    },
+    {
+      "channel": "pump-00.discharge_pressure_bar",
+      "node": "pump-00",
+      "rack": "rack-00",
+      "ring": "ring-00"
+    },
+    {
+      "channel": "pump-00.flow_m3_h",
+      "node": "pump-00",
+      "rack": "rack-00",
+      "ring": "ring-00"
+    },
+    {
+      "channel": "pump-00.vibration_mm_s",
+      "node": "pump-00",
+      "rack": "rack-00",
+      "ring": "ring-00"
+    },
+    {
+      "channel": "pump-01.bearing_temp_c",
+      "node": "pump-01",
+      "rack": "rack-00",
+      "ring": "ring-01"
+    },
+    {
+      "channel": "pump-01.discharge_pressure_bar",
+      "node": "pump-01",
+      "rack": "rack-00",
+      "ring": "ring-01"
+    },
+    {
+      "channel": "pump-01.flow_m3_h",
+      "node": "pump-01",
+      "rack": "rack-00",
+      "ring": "ring-01"
+    },
+    {
+      "channel": "pump-01.vibration_mm_s",
+      "node": "pump-01",
+      "rack": "rack-00",
+      "ring": "ring-01"
+    },
+    {
+      "channel": "pump-02.bearing_temp_c",
+      "node": "pump-02",
+      "rack": "rack-00",
+      "ring": "ring-00"
+    },
+    {
+      "channel": "pump-02.discharge_pressure_bar",
+      "node": "pump-02",
+      "rack": "rack-00",
+      "ring": "ring-00"
+    },
+    {
+      "channel": "pump-02.flow_m3_h",
+      "node": "pump-02",
+      "rack": "rack-00",
+      "ring": "ring-00"
+    },
+    {
+      "channel": "pump-02.vibration_mm_s",
+      "node": "pump-02",
+      "rack": "rack-00",
+      "ring": "ring-00"
+    },
+    {
+      "channel": "pump-03.bearing_temp_c",
+      "node": "pump-03",
+      "rack": "rack-01",
+      "ring": "ring-01"
+    },
+    {
+      "channel": "pump-03.discharge_pressure_bar",
+      "node": "pump-03",
+      "rack": "rack-01",
+      "ring": "ring-01"
+    },
+    {
+      "channel": "pump-03.flow_m3_h",
+      "node": "pump-03",
+      "rack": "rack-01",
+      "ring": "ring-01"
+    },
+    {
+      "channel": "pump-03.vibration_mm_s",
+      "node": "pump-03",
+      "rack": "rack-01",
+      "ring": "ring-01"
+    },
+    {
+      "channel": "pump-04.bearing_temp_c",
+      "node": "pump-04",
+      "rack": "rack-01",
+      "ring": "ring-00"
+    },
+    {
+      "channel": "pump-04.discharge_pressure_bar",
+      "node": "pump-04",
+      "rack": "rack-01",
+      "ring": "ring-00"
+    },
+    {
+      "channel": "pump-04.flow_m3_h",
+      "node": "pump-04",
+      "rack": "rack-01",
+      "ring": "ring-00"
+    },
+    {
+      "channel": "pump-04.vibration_mm_s",
+      "node": "pump-04",
+      "rack": "rack-01",
+      "ring": "ring-00"
+    },
+    {
+      "channel": "pump-05.bearing_temp_c",
+      "node": "pump-05",
+      "rack": "rack-01",
+      "ring": "ring-01"
+    },
+    {
+      "channel": "pump-05.discharge_pressure_bar",
+      "node": "pump-05",
+      "rack": "rack-01",
+      "ring": "ring-01"
+    },
+    {
+      "channel": "pump-05.flow_m3_h",
+      "node": "pump-05",
+      "rack": "rack-01",
+      "ring": "ring-01"
+    },
+    {
+      "channel": "pump-05.vibration_mm_s",
+      "node": "pump-05",
+      "rack": "rack-01",
+      "ring": "ring-01"
+    }
+  ]
+}

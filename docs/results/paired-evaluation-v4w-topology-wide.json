@@ -1,0 +1,159 @@
+{
+  "run": "2a9c28e2",
+  "plan": "docs\\results\\paired-plan-v4w.json",
+  "config": {
+    "duration_s": 900.0,
+    "rate": 800.0,
+    "channels": 24,
+    "seed": 20260906,
+    "threshold": 8.0,
+    "min_corroborating_channels": 2,
+    "min_scope_fraction": 0.25,
+    "synchrony_ms": 5000,
+    "verdict_buffer_ms": 30000,
+    "require_blast_radius": true,
+    "min_blast_nodes": 2
+  },
+  "topology": "docs\\results\\fleet-inventory-v4w.json",
+  "ground_truth": {
+    "faults": 57,
+    "faults_inside_windows": 25,
+    "faults_outside_windows": 32,
+    "faults_inside_quiet_windows": 14,
+    "artifacts": 43,
+    "windows": 11,
+    "fault_incidents": 30,
+    "incidents_by_domain": {
+      "channel": 15,
+      "node": 13,
+      "rack": 2
+    }
+  },
+  "shadow": {
+    "label": "shadow",
+    "episodes": 139,
+    "paged": 139,
+    "attributed": 0,
+    "faults_total": 30,
+    "faults_detected": 27,
+    "faults_inside_total": 14,
+    "faults_inside_detected": 13,
+    "faults_outside_total": 16,
+    "faults_outside_detected": 14,
+    "faults_quiet_window_total": 7,
+    "faults_quiet_window_detected": 7,
+    "artifact_pages": 44,
+    "unexplained_pages": 55,
+    "faults_by_domain": {
+      "rack": [
+        2,
+        2
+      ],
+      "node": [
+        12,
+        13
+      ],
+      "channel": [
+        13,
+        15
+      ]
+    },
+    "fault_channels_total": 57,
+    "fault_channels_detected": 48
+  },
+  "conditioned": {
+    "label": "conditioned",
+    "episodes": 139,
+    "paged": 131,
+    "attributed": 8,
+    "faults_total": 30,
+    "faults_detected": 27,
+    "faults_inside_total": 14,
+    "faults_inside_detected": 13,
+    "faults_outside_total": 16,
+    "faults_outside_detected": 14,
+    "faults_quiet_window_total": 7,
+    "faults_quiet_window_detected": 7,
+    "artifact_pages": 39,
+    "unexplained_pages": 54,
+    "faults_by_domain": {
+      "rack": [
+        2,
+        2
+      ],
+      "node": [
+        12,
+        13
+      ],
+      "channel": [
+        13,
+        15
+      ]
+    },
+    "fault_channels_total": 57,
+    "fault_channels_detected": 45
+  },
+  "fp_reduction": 0.06060606060606061,
+  "recall_loss": 0.0,
+  "recall_loss_inside": 0.0,
+  "meets_target": false,
+  "fail_open": {
+    "shadow_episodes": 139,
+    "fail_open_episodes": 139,
+    "identical": 139,
+    "missing_from_fail_open": 0,
+    "extra_in_fail_open": 0,
+    "suppressed": 0,
+    "attributed": 0
+  },
+  "conditioning": [
+    "conditioning: on, reading 'ops.context', verdicts held 30s of event time behind the fleet watermark",
+    "conditioning: decided 139 | attributed 8 | raised 131 | corroborated=8, implausible=131",
+    "corroboration evidence over 74 scoped decisions: in-scope siblings synchronous mean 0.62 (32 decisions with >=1) | present anywhere in the episode span mean 2.55 (61 decisions with >=1)",
+    "verdict barrier: buffer 30s | held 139 | released on watermark 135 | on flush 4 | delayed past episode close 0 of 135, event-time p50 0.0s p95 0.0s max 0.0s",
+    "context events seen 42 (malformed 0)"
+  ],
+  "ablation_timing_only": {
+    "pass": {
+      "label": "timing only",
+      "episodes": 139,
+      "paged": 125,
+      "attributed": 14,
+      "faults_total": 30,
+      "faults_detected": 26,
+      "faults_inside_total": 14,
+      "faults_inside_detected": 12,
+      "faults_outside_total": 16,
+      "faults_outside_detected": 14,
+      "faults_quiet_window_total": 7,
+      "faults_quiet_window_detected": 6,
+      "artifact_pages": 34,
+      "unexplained_pages": 54,
+      "faults_by_domain": {
+        "rack": [
+          2,
+          2
+        ],
+        "node": [
+          12,
+          13
+        ],
+        "channel": [
+          12,
+          15
+        ]
+      },
+      "fault_channels_total": 57,
+      "fault_channels_detected": 42
+    },
+    "fp_reduction": 0.1111111111111111,
+    "recall_loss": 0.033333333333333326,
+    "conditioning": [
+      "conditioning: on, reading 'ops.context', verdicts held 30s of event time behind the fleet watermark",
+      "conditioning: decided 139 | attributed 14 | raised 125 | corroborated=14, implausible=125",
+      "corroboration evidence over 70 scoped decisions: in-scope siblings synchronous mean 0.53 (28 decisions with >=1) | present anywhere in the episode span mean 2.41 (57 decisions with >=1)",
+      "verdict barrier: buffer 30s | held 139 | released on watermark 135 | on flush 4 | delayed past episode close 0 of 135, event-time p50 0.0s p95 0.0s max 0.0s",
+      "context events seen 42 (malformed 0)"
+    ]
+  }
+}

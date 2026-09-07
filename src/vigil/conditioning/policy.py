@@ -222,6 +222,11 @@ class ConditioningPolicy:
     # episode (synchronous) and siblings that moved anywhere in its span (present at all).
     synchronous_siblings: list[int] = field(default_factory=list, init=False)
     siblings_in_span: list[int] = field(default_factory=list, init=False)
+    # Every rejection reached, not only the one that ended up on the episode. An episode
+    # overlapped by both a deploy and a pipeline health record produces two conclusions and
+    # can carry one, and for four published runs the one it carried was always the pipeline
+    # event's -- which is why every result reports `isolated=0` (G-16).
+    rejections: dict[str, int] = field(default_factory=dict, init=False)
 
     def decide(self, episode: Episode) -> Attribution:
         self.decided += 1
@@ -255,13 +260,19 @@ class ConditioningPolicy:
             )
 
         # More than one event can overlap. Take the strongest explanation available, and
-        # keep the best rejection so the reason is informative when nothing explains it.
+        # keep the most informative rejection so the reason is useful when nothing explains
+        # it. Every rejection considered is counted, whether or not it is the one recorded:
+        # keeping only the winner is what hid the corroboration test's conclusions for four
+        # published runs (G-16).
         best_rejection: Attribution | None = None
         for event in sorted(lookup.events, key=lambda e: e.kind is ContextKind.PIPELINE):
             attribution = self._consider(episode, event)
             if attribution.status is EpisodeStatus.ATTRIBUTED:
                 return self._record(attribution)
-            if best_rejection is None or attribution.verdict is not Verdict.OUT_OF_SCOPE:
+            self.rejections[str(attribution.verdict)] = (
+                self.rejections.get(str(attribution.verdict), 0) + 1
+            )
+            if best_rejection is None or _more_informative(attribution, best_rejection):
                 best_rejection = attribution
 
         return self._record(best_rejection)
@@ -408,13 +419,16 @@ class ConditioningPolicy:
             return None
 
         observed = self.topology.footprint(perturbed)
-        declared = self.topology.footprint(event.scope) if event.scope else observed
         if observed.unplaced:
             # A channel the inventory does not know about. Absence of evidence, so the
             # topology declines to object rather than guessing where it lives.
             return None
 
-        if declared.node_count < self.thresholds.min_blast_nodes:
+        # A fleet-wide event declares no radius, so there is nothing to compare the
+        # observation against and only the observation itself can be judged.
+        declared = self.topology.footprint(event.scope) if event.scope else None
+
+        if declared is not None and declared.node_count < self.thresholds.min_blast_nodes:
             return Attribution(
                 status=EpisodeStatus.REAL,
                 verdict=Verdict.NARROW_BLAST_RADIUS,
@@ -434,8 +448,9 @@ class ConditioningPolicy:
                 attributed_to=None,
                 reason=(
                     f"every channel that moved sits on {observed.nodes[0]}, while "
-                    f"{event.event_id} reached {declared.node_count} machines; one machine "
-                    f"moving is that machine failing, not the rollout arriving"
+                    f"{event.event_id} reached "
+                    f"{declared.node_count if declared else 'the whole fleet'} machines; one "
+                    f"machine moving is that machine failing, not the rollout arriving"
                 ),
                 scope_size=len(event.scope),
             )
@@ -444,6 +459,7 @@ class ConditioningPolicy:
             self.thresholds.require_rack_spread
             and self.topology.distinguishes_racks
             and observed.confined_to_one_rack
+            and declared is not None
             and not declared.confined_to_one_rack
         ):
             return Attribution(
@@ -501,6 +517,9 @@ class ConditioningPolicy:
             parts.append(f"failed open {self.failed_open:,}")
         breakdown = ", ".join(f"{k}={v}" for k, v in sorted(self.verdicts.items()))
         line = " | ".join(parts) + (f" | {breakdown}" if breakdown else "")
+        if self.rejections:
+            reached = ", ".join(f"{k}={v}" for k, v in sorted(self.rejections.items()))
+            line += f"\n  rejections reached (an episode carries one): {reached}"
         if not self.synchronous_siblings:
             return line
         return f"{line}\n  {self.evidence_report()}"
@@ -525,6 +544,31 @@ class ConditioningPolicy:
             f"present anywhere in the episode span mean "
             f"{sum(self.siblings_in_span) / n:.2f} ({span_any} decisions with >=1)"
         )
+
+
+# How informative a rejection is, most first. The episode is raised either way; what this
+# decides is which of several overlapping events gets to explain why on the record. A
+# conclusion the topology reached about the channels that moved says more than "a pipeline
+# event overlapped and had no mechanism", which says more than "that event never touched
+# this channel at all". Before this ordering existed the *last* rejection won, pipeline
+# events sorted last, and the deploy test's conclusion was overwritten every time (G-16).
+_VERDICT_INFORMATIVENESS = (
+    Verdict.FAULT_DOMAIN,
+    Verdict.NARROW_BLAST_RADIUS,
+    Verdict.ISOLATED,
+    Verdict.IMPLAUSIBLE,
+    Verdict.OUT_OF_SCOPE,
+)
+
+
+def _more_informative(candidate: Attribution, incumbent: Attribution) -> bool:
+    def rank(attribution: Attribution) -> int:
+        try:
+            return _VERDICT_INFORMATIVENESS.index(attribution.verdict)
+        except ValueError:
+            return len(_VERDICT_INFORMATIVENESS)
+
+    return rank(candidate) < rank(incumbent)
 
 
 _SEVERITY_ORDER = {

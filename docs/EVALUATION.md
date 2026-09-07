@@ -336,7 +336,14 @@ python evaluate.py --duration 900 --rate 400 --channels 12     --deploys-per-hou
 
 Fail-open held: **76 of 76** episodes identical to the unconditioned pass, `no_context=76`.
 
-### 3.7 All four measurements, and what they add up to
+### 3.7 The first four measurements, and what they added up to
+
+> Superseded by sections 3.8 to 3.11, which are v4. The conclusion below stood on the
+> evidence available at the time and two things in it turned out to be wrong: the
+> `isolated=0` reading (see G-16 -- the verdict field could not report what it was read as
+> reporting), and the inference that in-scope synchrony is rare. Kept as written, because a
+> record that quietly repairs its own earlier conclusions is not a record.
+
 
 | Run | What changed | FP reduction | Recall loss | Quiet-window recall | NFR-8 |
 |---|---|---|---|---|---|
@@ -385,6 +392,115 @@ scope, say, rather than timing.
 
 **NFR-8 is not met and is reported as not met.** The false-positive reduction is +11.1%
 against a 40% target. That is the result.
+
+### 3.8 v4a -- the control: the same policy, with the evidence actually present
+
+Step one of v4 changed no discriminator. It changed *when* the discriminator is asked
+(ADR-037): the corroboration index is filled when an episode opens rather than when it
+closes, and the verdict waits behind an event-time barrier keyed to the fleet watermark --
+the minimum across channels, so the slowest channel governs. v3's synchrony test is
+otherwise untouched, which is what makes this a control rather than a fifth attempt.
+
+Run `926aaf75`, **same command, same seed, same density, same scenario generator as v1-v3**:
+
+```
+python evaluate.py --duration 900 --rate 400 --channels 12     --deploys-per-hour 60 --faults-per-hour 120     --report-json docs/results/paired-evaluation-v4a-watermarked.json
+```
+
+Ground truth identical to v1-v3: 30 real faults (13 inside context windows, 17 outside, 3
+inside quiet windows), 56 artifacts, 14 deploy windows.
+
+| Measure | Shadow | Conditioned | Delta |
+|---|---|---|---|
+| Episodes recorded | 86 | 86 | |
+| Pages raised | 86 | 65 | -21 |
+| Attributed (not paged) | 0 | 21 | |
+| False pages (artifact + unexplained) | 72 | 52 | **-20** |
+| of which artifact-driven | 46 | 26 | -20 |
+| Recall, all real faults | 83.3% (25/30) | 66.7% (20/30) | **-16.7%** |
+| Recall, faults **outside** windows | 70.6% (12/17) | 64.7% (11/17) | -5.9% |
+| Recall, faults **inside** windows | 100.0% (13/13) | 69.2% (9/13) | **-30.8%** |
+| Recall, faults in **quiet** windows | 100.0% (3/3) | 100.0% (3/3) | **+0.0%** |
+| Precision (incident-level) | 16.3% | 20.0% | +3.7% |
+
+**false-positive reduction +27.8% (target >= 40%, missed) -- recall loss +16.7%
+(tolerance <= 5%, missed). NFR-8 NOT MET.**
+
+Fail-open held: 86 of 86 episodes identical to the unconditioned pass, `no_context=86`.
+
+#### The evidence really was missing, and it is not any more
+
+This is the measurement G-7 was a hypothesis about, and it is now instrumented rather than
+inferred. The policy records, for every scoped decision, how many in-scope siblings were
+synchronous with the episode and how many were present anywhere in its span:
+
+```
+corroboration evidence over 83 scoped decisions:
+  in-scope siblings synchronous              mean 0.65   (33 decisions with >= 1)
+  present anywhere in the episode span       mean 2.47   (56 decisions with >= 1)
+```
+
+In two thirds of scoped decisions there is now an in-scope sibling in the record to reason
+about. Attributions went from 7 in v3 to 21 here, on the same scenario at the same density,
+with no change to the criterion. **G-7 is closed.**
+
+#### What it bought, and what it exposed
+
++27.8% against v3's +11.1%: the watermarking alone is worth 16.7 points of false-positive
+reduction, which is most of the way from v3 to the 40% target. It also **more than doubled
+the recall loss**, from 6.7% to 16.7%, and all of it lands inside deploy windows
+(-30.8%, nine of thirteen faults detected where v3 detected twelve).
+
+That is not a regression. It is the criterion being tested for the first time on complete
+data, and failing:
+
+> **Synchrony inside scope does not separate a deploy artifact from a real fault, because a
+> real fault is often synchronous inside scope.** A pump seizing moves its vibration, its
+> bearing temperature and its flow within seconds of each other. If those channels are
+> inside a deploy's scope -- and the adversarial generator puts 40% of faults inside deploy
+> windows on purpose -- then every question the v1-v3 policy knows how to ask answers
+> "deploy", and a real fault stops paging anyone.
+
+v3 was protected from this by its own blindness: it could not see enough siblings to fire,
+so it could not fire wrongly. Removing the blindness is what makes the criterion's weakness
+measurable. The quiet-window population is undamaged (3/3, as in the low-density row), so
+this is not blanket suppression returning; it is a discriminator attributing the wrong
+things confidently.
+
+#### The barrier cost almost nothing, and the index change did the work
+
+```
+verdict barrier: buffer 30s | held 86 | released on watermark 84 | on flush 2
+                 | delayed past episode close 2 of 84, event-time p50 0.0s max 66.4s
+```
+
+Only **2 of 84** verdicts were actually delayed past the moment their episode closed. The
+reason is geometry: an episode does not close until its channel has been quiet for two
+window slides, by which point a sibling that departed within the synchrony tolerance has
+already had its first window closed and scored. So the *index* change is what supplied the
+evidence, and the barrier is a guarantee rather than the active ingredient in this run.
+
+That is worth saying plainly, because the reverse would have been easy to imply. The barrier
+earns its place by making the property hold rather than happen to hold -- it does not depend
+on the merge gap being larger than a window, and it is what makes the verdict a function of
+event time rather than of the order episodes closed in. But on this data, at this geometry,
+it is not where the 16.7 points came from. Both halves are reported so the attribution of
+credit is checkable.
+
+#### A correction to the earlier diagnosis (G-16)
+
+Sections 3.4 and 3.7 read `isolated=0` as "the corroboration test never once concluded a
+channel had moved alone". The verdict field could not have reported that. When several
+context events overlap an episode the policy kept the **last** non-out-of-scope rejection,
+and pipeline health events sort last and answer `implausible` -- so an `isolated` conclusion
+from the deploy test was overwritten in the record whenever a health event also overlapped,
+which is nearly always. This run shows `corroborated=21, implausible=65, isolated=0` while
+the evidence counters show 50 of 83 scoped decisions with no synchronous sibling at all:
+those 50 *are* isolated conclusions, and the record never said so.
+
+No measured number changes. Both verdicts raise the episode, so `paged`, recall and
+false-positive reduction are unaffected in every run published here. What was wrong was a
+line of reasoning that rested on a field which could not carry it.
 
 ## 4. Q2 — detector vs. baseline on TSB-AD-M
 

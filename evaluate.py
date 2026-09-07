@@ -115,7 +115,13 @@ def conditioning_lines(stdout: str) -> list[str]:
     Scraping them out of a console afterwards is how a number ends up in a document with
     no run behind it, so they travel in the report.
     """
-    keep = ("conditioning:", "corroboration evidence", "verdict barrier:", "context events seen")
+    keep = (
+        "conditioning:",
+        "corroboration evidence",
+        "rejections reached",
+        "verdict barrier:",
+        "context events seen",
+    )
     return [line.strip() for line in stdout.splitlines() if line.strip().startswith(keep)]
 
 

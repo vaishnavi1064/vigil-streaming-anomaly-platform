@@ -592,3 +592,65 @@ def test_the_same_data_corroborates_on_window_starts_and_does_not_on_onsets():
     assert verdict_when(lambda e: e.t_start_ms) is Verdict.CORROBORATED
     # What the record now carries.
     assert verdict_when(lambda e: e.began_ms) is not Verdict.CORROBORATED
+
+
+# ------------------------- what the record says a verdict was (G-16) -------------------------
+# An episode can be overlapped by several context events and reaches a conclusion about each,
+# but carries only one on the record. For four published runs the one it carried was always
+# the last considered, pipeline events sorted last, and so every result reported
+# `isolated=0` -- not because the corroboration test never concluded a channel had moved
+# alone, but because that conclusion was overwritten before anyone could read it.
+
+
+def isolated_and_implausible():
+    """One deploy that cannot explain the episode, one clean pipeline window that cannot either."""
+    index = FlaggedWindowIndex(synchrony_ms=5_000)
+    index.record(FLEET[0], 60_000, 90_000)
+    return ConditioningPolicy(
+        source=StaticContextSource([deploy(scope=FLEET[:4]), pipeline()]),
+        index=index,
+        thresholds=ConditioningThresholds(synchrony_ms=5_000),
+    )
+
+
+def test_the_recorded_verdict_is_the_one_that_says_the_most():
+    # "This channel moved alone among the four the deploy touched" is a finding. "A pipeline
+    # window overlapped and had lost nothing" is the absence of one.
+    assert isolated_and_implausible().decide(episode(FLEET[0])).verdict is Verdict.ISOLATED
+
+
+def test_every_rejection_reached_is_counted_even_though_one_is_recorded():
+    policy = isolated_and_implausible()
+    policy.decide(episode(FLEET[0]))
+    assert policy.rejections == {str(Verdict.ISOLATED): 1, str(Verdict.IMPLAUSIBLE): 1}
+    assert policy.verdicts == {str(Verdict.ISOLATED): 1}
+
+
+def test_choosing_a_different_verdict_to_record_never_changes_the_decision():
+    """The reason this was a reporting defect and not a measurement error.
+
+    Both verdicts raise the episode, so no run published before the fix reported a paging
+    decision, a recall figure or a false-positive reduction that this changes.
+    """
+    ep = episode(FLEET[0])
+    isolated_and_implausible().apply(ep)
+    assert ep.status is EpisodeStatus.REAL
+    assert ep.attributed_to is None
+
+
+def test_an_out_of_scope_event_is_still_the_least_informative_thing_to_record():
+    policy = ConditioningPolicy(
+        source=StaticContextSource([deploy(scope=FLEET[4:]), pipeline()]),
+        index=FlaggedWindowIndex(),
+    )
+    decision = policy.decide(episode(FLEET[0]))
+    assert decision.verdict is Verdict.IMPLAUSIBLE
+    assert policy.rejections[str(Verdict.OUT_OF_SCOPE)] == 1
+
+
+def test_the_summary_reports_every_rejection_reached():
+    policy = isolated_and_implausible()
+    policy.decide(episode(FLEET[0]))
+    summary = policy.summary()
+    assert "rejections reached" in summary
+    assert "implausible=1" in summary
