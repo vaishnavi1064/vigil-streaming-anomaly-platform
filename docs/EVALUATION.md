@@ -318,7 +318,94 @@ named. Recent work is openly divided on whether time-series foundation models be
 methods at anomaly detection (PROJECT_PLAN section 15.1); "I measured where the trendy method is
 the wrong tool" is a stronger finding than an unexamined win.
 
-**Results: not yet measured.** Phase 5.
+**Results.** Run `python benchmark.py --report-json docs/results/benchmark.json`, windows of
+100 points sliding by 50, `--max-points 20000`, Chronos-Bolt-tiny on CPU.
+
+**144 of 200 series scored.** The other 56 were dropped because their labelled anomalies
+begin past the 20,000-point truncation, so the truncated view of them contains no positives
+at all. That is a real bias and it points one way: the scored corpus is the early-onset half
+of the corpus. It is stated here rather than left in the log, and the harness now prints it
+with the aggregate.
+
+| Detector | AUC-PR (median) | AUC-PR (mean) | F1 at a matched alarm budget | Scoring time |
+|---|---|---|---|---|
+| **zscore** | **0.198** | **0.321** | **0.325** | **59 s** |
+| chronos-bolt-tiny | 0.152 | 0.257 | 0.231 | 8,312 s |
+
+Precision, recall and F1 are equal by construction at a matched alarm budget: the detector is
+allowed exactly as many alarms as there are positive windows, so a false positive and a false
+negative are the same event counted twice.
+
+**Head to head over 144 series: zscore wins 78, chronos-bolt-tiny wins 56, 10 ties.**
+
+### 4.1 The finding: the foundation model loses, and costs 141x more to run
+
+The zero-shot foundation model is beaten by a rolling z-score on this corpus, on the median,
+on the mean, and on the head-to-head count -- while taking **141 times more compute** to
+produce that worse answer (8,312 s against 59 s for the same 2.1 million points). On a
+laptop CPU this is not a close call.
+
+This is the outcome `docs/PROJECT_PLAN.md` section 15.1 flagged as an open question in the
+literature, and it is why the z-score baseline was built first and kept: the interesting
+result was always going to be *where* the trendy method is the wrong tool, and it is here
+for most of this corpus.
+
+### 4.2 Where it does win, which is not nowhere
+
+Chronos wins 56 series, and the wins are not scattered at random.
+
+| Dataset family | zscore wins | chronos wins | ties | n |
+|---|---|---|---|---|
+| SVDB (ECG) | 21 | 1 | 0 | 22 |
+| SMAP (spacecraft telemetry) | 21 | 6 | 0 | 27 |
+| LTDB (ECG) | 4 | 1 | 0 | 5 |
+| OPPORTUNITY (wearables) | 4 | 3 | 0 | 7 |
+| MSL (spacecraft telemetry) | 8 | 8 | 0 | 16 |
+| SMD (server machines) | 9 | 12 | 0 | 21 |
+| **Exathlon (Spark clusters)** | 8 | **19** | 0 | 27 |
+| TAO (ocean buoys) | 0 | 3 | 10 | 13 |
+
+The split follows the shape of the signal rather than the domain label. Where an anomaly is a
+sharp amplitude excursion against a stationary baseline -- ECG, spacecraft sensors -- a
+z-score is already the right model and forecasting buys nothing. Where the normal signal is
+structured and non-stationary and an anomaly is a *departure from an expected pattern* rather
+than from an expected level -- Exathlon's Spark cluster traces, SMD's machine metrics -- the
+forecaster earns its keep, and it takes Exathlon 19-8.
+
+Anomaly density says the same thing from another angle:
+
+| Anomalous fraction of windows | zscore wins | chronos wins | ties | chronos win rate |
+|---|---|---|---|---|
+| < 1% | 11 | 10 | 0 | 48% |
+| 1-5% | 32 | 30 | 2 | 47% |
+| 5-10% | 24 | 13 | 5 | 31% |
+| > 10% | 11 | 3 | 3 | 18% |
+
+The model is competitive on rare anomalies and falls away as they become common. The
+mechanism is visible in the design: the forecaster conditions on recent history, and when
+more than a tenth of that history is itself anomalous, it forecasts the anomaly and the
+residual goes flat. The z-score's decayed reference has the same weakness in principle and
+is evidently less sensitive to it in practice.
+
+### 4.3 What this benchmark does not establish
+
+- **The corpus is the early-onset half.** 56 of 200 series were excluded by truncation, all
+  of them series whose anomalies start late. Removing the truncation would take an estimated
+  4+ hours of CPU here and has not been run.
+- **Window resolution, not point resolution.** Each window is scored once against a window
+  label (see the module docstring for why point-spreading was abandoned). This is a coarser
+  task than point-level TSB-AD scoring and the numbers are **not comparable** to point-level
+  leaderboards.
+- **Multivariate series, univariate detectors, max across columns.** An anomaly that exists
+  only in the correlation between features -- where each column alone looks normal -- cannot
+  be detected by either detector as driven here. Such anomalies are in this corpus.
+- **One model, at its smallest size.** Chronos-Bolt-**tiny** was chosen to fit the laptop
+  (measured per window at batch 32: tiny 0.64 ms, mini 1.15 ms, small 2.95 ms, base 9.32 ms).
+  A larger checkpoint may well close the gap; that this one does not close it at 141x the
+  cost is the claim, not that no foundation model can.
+- **The timings are wall-clock on a machine that was not idle.** Other work ran during the
+  benchmark. The 141x ratio is far too large to be an artefact of that, but neither figure is
+  a clean latency measurement, and the per-window latencies in section 5.1b are.
 
 ---
 

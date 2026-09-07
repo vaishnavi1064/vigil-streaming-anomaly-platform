@@ -21,7 +21,7 @@ Phases are from `BUILD.md` section 7; stories from `docs/USER_STORIES.md`.
 | 2 | Correctness and resilience: Flink, event-time, 2PC exactly-once, reconciliation harness, chaos suite, scale harness | Zero reconciliation drift over a long run; >=3 faults recover with bounded lag; throughput-vs-parallelism curve | **Gate met on two of three clauses.** 4/4 faults recovered with proven disruption; curve produced and the plateau named (`docs/SCALE.md`). Drift 0 but over 15 min, not the 4 h NFR-6 asks. Flink runs with bit-identical parity, never fault-tested (G-1) |
 | 3 | The core contribution: context-conditioned detection + ClickHouse + Iceberg | Measured false-positive reduction vs. the unconditioned baseline; fail-open verified | **Gate clauses satisfied as written; the requirement behind them is not met.** Reduction measured three times and recorded (+60.9%/-36.7%, +9.0%/-10.0%, +6.7%/-6.7%); fail-open verified live, 73/73 identical. But **NFR-8 fails in all three**, and the v2 diagnosis says the synchrony test was invalid rather than refuted -- B-4. ClickHouse/Iceberg not started |
 | 4 | Explanation and agent (thin) | Flagged anomaly explained; propose -> gate -> sandbox execute; trace persisted | **Mostly done.** Closed action set, deterministic gate, sandbox, runbook RAG, full loop -- 98 tests. VLM explanation not started |
-| 5 | Evaluation and CI | Honest benchmark incl. losses; DeepEval gate fails the build on regression | **In progress.** Metrics + TSB-AD benchmark harness built; GitHub Actions CI written. Full benchmark run and DeepEval gate not done |
+| 5 | Evaluation and CI | Honest benchmark incl. losses; DeepEval gate fails the build on regression | **Gate met, with one substitution.** 200-series benchmark run and published including the loss: the foundation model is beaten by the z-score baseline at 141x the cost, and where it does win is named. Quality gate runs in CI and fails on floors or baseline drift -- but it is structural, not LLM-judged, since Ragas/DeepEval need a key (C-2). QLoRA fine-tune paused on B-3 |
 | 6 | Production wrapper and polish | One-command bring-up; README + diagram + demo | Not started |
 
 ### Story board
@@ -42,7 +42,7 @@ Phases are from `BUILD.md` section 7; stories from `docs/USER_STORIES.md`.
 | G1 | Live dashboard | **Done** - episodes, per-detector comparison, latency vs. budget, and the reconciliation panel story G1 calls Must: ledger drift beside the independent broker-offset audit, per-window health with grades. Still refuses to render numbers when no run has happened. Screenshot-verified light and dark, 14 API tests |
 | H1 | Throughput harness | **Done** - producer 76,556 ev/s blast; consumer-side curve measured over a 3.9 M backlog: 94,495/s at one consumer, plateau **170,414/s at 3-6 consumers** over 6 partitions. NFR-4 met (20,000 target); NFR-5's near-linear claim **not** met, 1.80x at 6 consumers. `docs/SCALE.md` |
 | H2 | Chaos suite | **Done** - 4 fault modes, all broke 20/20 serviceability samples, all recovered within the 60s budget, drift 0 verified by independent replay. `docs/CHAOS.md`. 18 unit tests |
-| I1 | Honest detection benchmark | **Harness built**, smoke-run on 6 series. Full 200-series run not yet done |
+| I1 | Honest detection benchmark | **Done, and the foundation model lost.** 144 of 200 series scored (56 dropped by truncation, stated): zscore median AUC-PR 0.198 against chronos-bolt-tiny 0.152, head to head 78/56/10, at **141x less compute**. The regime boundary is named: the model wins where normal is structured and non-stationary (Exathlon 19-8) and loses where an anomaly is a sharp excursion against a flat baseline (SVDB 21-1) |
 | I2 | CI quality gate | **Done for what is measurable without a judge.** CI runs lint, format, unit, integration, a secret scan, repo-standards checks, and `agent_quality.py`: grounding, gate approval, sandbox containment, safety compliance and abstention as rates over 400 episodes, failing on a broken floor or on drift below a committed baseline. 11 tests, most of which break the agent on purpose. Ragas/DeepEval need an LLM judge and a key (C-2) |
 
 ---
@@ -54,6 +54,8 @@ Phases are from `BUILD.md` section 7; stories from `docs/USER_STORIES.md`.
 | 2026-09-05 | `67630bb` | **Phase 1 gate passed.** Wrote `docs/CORRECTNESS.md` (guarantee per boundary + what is not covered), filled `docs/EVALUATION.md` sections 5.1a-5.1d with measured numbers, wrote `README.md`. |
 | 2026-09-05 | `4e55212` | **Phase 2 started.** Reconciliation harness: per-channel sequence identity, independent broker-offset audit, per-window health signal on the context topic. Chaos suite: 4 fault modes with recovery verified by independent replay. Scale harness: parallelism sweep over a fixed pre-filled backlog. |
 | 2026-09-06 | `f011835` | **Chaos verified** (4/4, disruption proven), `docs/CHAOS.md`, the paired evaluation harness (`evaluate.py`), and conditioning wired into the detector behind `--conditioning`. |
+| 2026-09-06 | (this commit) | **200-series benchmark run: the foundation model lost.** zscore median AUC-PR 0.198 vs chronos-bolt-tiny 0.152, 78/56/10 head to head, 59 s vs 8,312 s of compute. Regime boundary measured both ways -- by dataset family and by anomaly density -- and the model's win rate falls from 48% on rare anomalies to 18% when more than a tenth of windows are anomalous. |
+| 2026-09-06 | (this commit) | **One-command demo** (`demo.py`): produce, pause the broker mid-stream, reconcile, detect, remediate; 7/7 claims held. Found and fixed two of its own defects first. |
 | 2026-09-06 | (this commit) | **Agent quality gate built and wired into CI.** Structural rates only, since the judged metrics need a key: 400 episodes, 1,267 actions, 100% grounded / gate-approved / sandboxed, 97.1% citing a runbook. Fails on a broken floor or on drift below the committed baseline -- and the baseline is what catches a planner that escalates everything, which breaks no floor at all. |
 | 2026-09-06 | (this commit) | **Fail-open verified end to end and the reconciliation panel built.** The low-density sensitivity run doubles as the fail-open check: 73 of 73 episodes identical to the unconditioned pass with `no_context=73`. Sensitivity itself: at 20 deploys/hour conditioning neither blankets (quiet-window and outside-window recall untouched) nor helps much (+6.7% FP reduction), so density is not what makes NFR-8 miss. |
 | 2026-09-06 | (this commit) | **Scale sweep run and `docs/SCALE.md` written.** Plateau 170,414 readings/s at 3-6 consumers over 6 partitions; NFR-4 met, NFR-5's near-linear claim not met at 1.80x. Multi-consumer drains read up to 2,100 records *more* than were produced -- rebalance re-delivery, a measured statement of why this path is at-least-once. |
@@ -165,8 +167,8 @@ rented GPU now that the training set is measured to have five distinct targets.
 
 **Then, in rough priority order:**
 
-1. Full 200-series TSB-AD benchmark with the foundation model, and the honest
-   where-it-loses table.
+1. Re-run the benchmark without truncation, so the 56 late-onset series are not excluded
+   (est. 4+ h of CPU).
 2. Flink checkpoint-recovery chaos run (`chaos.py --fault flink-taskmanager-kill`, needs the
    flink profile up) -- this is the scenario that actually exercises two-phase commit.
 3. Multi-hour soak for NFR-6. Must run after chaos and scale.
