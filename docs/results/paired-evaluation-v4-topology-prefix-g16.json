@@ -1,10 +1,10 @@
 {
-  "run": "2a07b2b6",
-  "plan": "docs\\results\\paired-plan-v4w.json",
+  "run": "c7a53487",
+  "plan": "docs\\results\\paired-plan-v4.json",
   "config": {
     "duration_s": 900.0,
-    "rate": 800.0,
-    "channels": 24,
+    "rate": 400.0,
+    "channels": 12,
     "seed": 20260906,
     "threshold": 8.0,
     "min_corroborating_channels": 2,
@@ -14,7 +14,7 @@
     "require_blast_radius": true,
     "min_blast_nodes": 2
   },
-  "topology": "docs\\results\\fleet-inventory-v4w.json",
+  "topology": "docs\\results\\fleet-inventory-v4.json",
   "ground_truth": {
     "faults": 57,
     "faults_inside_windows": 25,
@@ -31,58 +31,26 @@
   },
   "shadow": {
     "label": "shadow",
-    "episodes": 147,
-    "paged": 147,
+    "episodes": 83,
+    "paged": 83,
     "attributed": 0,
     "faults_total": 30,
     "faults_detected": 28,
     "faults_inside_total": 14,
-    "faults_inside_detected": 13,
+    "faults_inside_detected": 14,
     "faults_outside_total": 16,
-    "faults_outside_detected": 15,
+    "faults_outside_detected": 14,
     "faults_quiet_window_total": 7,
     "faults_quiet_window_detected": 7,
-    "artifact_pages": 37,
-    "unexplained_pages": 75,
+    "artifact_pages": 39,
+    "unexplained_pages": 21,
     "faults_by_domain": {
       "rack": [
         2,
         2
       ],
       "node": [
-        12,
-        13
-      ],
-      "channel": [
-        14,
-        15
-      ]
-    },
-    "fault_channels_total": 57,
-    "fault_channels_detected": 49
-  },
-  "conditioned": {
-    "label": "conditioned",
-    "episodes": 147,
-    "paged": 141,
-    "attributed": 6,
-    "faults_total": 30,
-    "faults_detected": 27,
-    "faults_inside_total": 14,
-    "faults_inside_detected": 12,
-    "faults_outside_total": 16,
-    "faults_outside_detected": 15,
-    "faults_quiet_window_total": 7,
-    "faults_quiet_window_detected": 7,
-    "artifact_pages": 33,
-    "unexplained_pages": 75,
-    "faults_by_domain": {
-      "rack": [
-        2,
-        2
-      ],
-      "node": [
-        12,
+        13,
         13
       ],
       "channel": [
@@ -91,16 +59,48 @@
       ]
     },
     "fault_channels_total": 57,
-    "fault_channels_detected": 47
+    "fault_channels_detected": 53
   },
-  "fp_reduction": 0.03571428571428571,
+  "conditioned": {
+    "label": "conditioned",
+    "episodes": 83,
+    "paged": 72,
+    "attributed": 11,
+    "faults_total": 30,
+    "faults_detected": 27,
+    "faults_inside_total": 14,
+    "faults_inside_detected": 13,
+    "faults_outside_total": 16,
+    "faults_outside_detected": 14,
+    "faults_quiet_window_total": 7,
+    "faults_quiet_window_detected": 7,
+    "artifact_pages": 29,
+    "unexplained_pages": 20,
+    "faults_by_domain": {
+      "rack": [
+        2,
+        2
+      ],
+      "node": [
+        13,
+        13
+      ],
+      "channel": [
+        12,
+        15
+      ]
+    },
+    "fault_channels_total": 57,
+    "fault_channels_detected": 48
+  },
+  "fp_reduction": 0.18333333333333332,
   "recall_loss": 0.033333333333333326,
-  "recall_loss_inside": 0.07142857142857151,
+  "recall_loss_inside": 0.0714285714285714,
   "meets_target": false,
   "fail_open": {
-    "shadow_episodes": 147,
-    "fail_open_episodes": 147,
-    "identical": 147,
+    "shadow_episodes": 83,
+    "fail_open_episodes": 83,
+    "identical": 83,
     "missing_from_fail_open": 0,
     "extra_in_fail_open": 0,
     "suppressed": 0,
@@ -108,35 +108,34 @@
   },
   "conditioning": [
     "conditioning: on, reading 'ops.context', verdicts held 30s of event time behind the fleet watermark",
-    "conditioning: decided 147 | attributed 6 | raised 141 | corroborated=6, fault_domain=4, implausible=90, isolated=46, narrow_blast_radius=1",
-    "rejections reached (an episode carries one): fault_domain=5, implausible=423, isolated=61, narrow_blast_radius=2, out_of_scope=148",
-    "corroboration evidence over 74 scoped decisions: in-scope siblings synchronous mean 0.47 (29 decisions with >=1) | present anywhere in the episode span mean 2.46 (61 decisions with >=1)",
-    "verdict barrier: buffer 30s | held 147 | released on watermark 144 | on flush 3 | delayed past episode close 1 of 144, event-time p50 0.0s p95 0.0s max 60.0s",
+    "conditioning: decided 83 | attributed 11 | raised 72 | corroborated=11, implausible=72",
+    "corroboration evidence over 72 scoped decisions: in-scope siblings synchronous mean 0.42 (26 decisions with >=1) | present anywhere in the episode span mean 2.89 (59 decisions with >=1)",
+    "verdict barrier: buffer 30s | held 83 | released on watermark 80 | on flush 3 | delayed past episode close 2 of 80, event-time p50 0.0s p95 0.0s max 11.6s",
     "context events seen 42 (malformed 0)"
   ],
   "ablation_timing_only": {
     "pass": {
       "label": "timing only",
-      "episodes": 147,
-      "paged": 136,
-      "attributed": 11,
+      "episodes": 83,
+      "paged": 70,
+      "attributed": 13,
       "faults_total": 30,
-      "faults_detected": 26,
+      "faults_detected": 27,
       "faults_inside_total": 14,
-      "faults_inside_detected": 11,
+      "faults_inside_detected": 13,
       "faults_outside_total": 16,
-      "faults_outside_detected": 15,
+      "faults_outside_detected": 14,
       "faults_quiet_window_total": 7,
       "faults_quiet_window_detected": 7,
-      "artifact_pages": 28,
-      "unexplained_pages": 75,
+      "artifact_pages": 27,
+      "unexplained_pages": 20,
       "faults_by_domain": {
         "rack": [
           2,
           2
         ],
         "node": [
-          12,
+          13,
           13
         ],
         "channel": [
@@ -145,16 +144,15 @@
         ]
       },
       "fault_channels_total": 57,
-      "fault_channels_detected": 44
+      "fault_channels_detected": 47
     },
-    "fp_reduction": 0.08035714285714286,
-    "recall_loss": 0.06666666666666665,
+    "fp_reduction": 0.21666666666666667,
+    "recall_loss": 0.033333333333333326,
     "conditioning": [
       "conditioning: on, reading 'ops.context', verdicts held 30s of event time behind the fleet watermark",
-      "conditioning: decided 147 | attributed 11 | raised 136 | corroborated=11, implausible=90, isolated=46",
-      "rejections reached (an episode carries one): implausible=405, isolated=60, out_of_scope=142",
-      "corroboration evidence over 71 scoped decisions: in-scope siblings synchronous mean 0.44 (26 decisions with >=1) | present anywhere in the episode span mean 2.45 (58 decisions with >=1)",
-      "verdict barrier: buffer 30s | held 147 | released on watermark 144 | on flush 3 | delayed past episode close 3 of 144, event-time p50 0.0s p95 0.0s max 61.5s",
+      "conditioning: decided 83 | attributed 13 | raised 70 | corroborated=13, implausible=70",
+      "corroboration evidence over 69 scoped decisions: in-scope siblings synchronous mean 0.38 (23 decisions with >=1) | present anywhere in the episode span mean 2.86 (56 decisions with >=1)",
+      "verdict barrier: buffer 30s | held 83 | released on watermark 80 | on flush 3 | delayed past episode close 2 of 80, event-time p50 0.0s p95 0.0s max 11.6s",
       "context events seen 42 (malformed 0)"
     ]
   }

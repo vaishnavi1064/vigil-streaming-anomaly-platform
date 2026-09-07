@@ -100,6 +100,10 @@ Both halves must hold (NFR-8 / ADR-016):
 
 ### 3.4 Results
 
+> Sections 3.4 to 3.7 are v1 to v3, kept as written. The runs are real and the numbers
+> stand; two of the conclusions drawn from them do not, and where that is so it is said in
+> place rather than edited out. v4 is sections 3.8 to 3.11.
+
 Run:
 
 ```
@@ -501,6 +505,206 @@ those 50 *are* isolated conclusions, and the record never said so.
 No measured number changes. Both verdicts raise the episode, so `paged`, recall and
 false-positive reduction are unaffected in every run published here. What was wrong was a
 line of reasoning that rested on a field which could not carry it.
+
+### 3.9 The scenario v4 is measured on, and why it is not the v1-v3 scenario
+
+Step two changes the data as well as the policy, and that has to be stated before any
+number is read. The generator now places excursions on the inventory (ADR-038):
+
+| | v1 - v4a | v4, v4w |
+|---|---|---|
+| A deploy touches | a random subset of channels | one metric family across the machines of one deploy ring |
+| A real fault touches | exactly one channel | 2-4 metrics on **one machine** (55%), 1-2 metrics on **two machines in one cabinet** (15%), or one channel (30%) |
+| Faults are counted | per channel-episode | **per incident** -- a seizing pump is one thing that happened |
+
+Ground truth for both v4 runs, written before either pass: **30 fault incidents** (15
+single-channel, 13 machine faults, 2 cabinet faults) spanning **57 channel-episodes**,
+**43 injected artifacts**, **11 deploy windows**, 7 incidents inside quiet deploys.
+
+Three consequences, all of which cut against reading v4 as a continuation of v1-v3:
+
+1. **The scenario is not the same scenario.** Same seed, same command, same density -- but
+   the generator consumes its random stream differently, so it schedules 11 deploys where
+   v1-v3 scheduled 14, and 43 artifacts where they had 56. v4 is compared to **its own
+   shadow pass**, which is what every result here has always been; it is not comparable to
+   v1-v3 digit by digit.
+2. **Multi-channel faults are harder to lose.** An incident counts as detected if *any* of
+   its channels pages someone, so a policy has to attribute every metric of a seizing pump
+   to hide it. That makes the recall column structurally more forgiving than v1-v3's, which
+   is why the per-channel-episode row is reported beside it: at 12 channels the conditioned
+   pass loses 1 incident and 4 channel-episodes from the same run.
+3. **The trap population is deliberate.** Six multi-channel faults land wholly inside a
+   deploy's scope, moving within four seconds of each other. On timing, scope and fraction
+   they are indistinguishable from a deploy artifact. That is the case ADR-038 exists for,
+   and a generator that did not produce it would make the topology test unfalsifiable.
+
+### 3.10 v4 -- the topology discriminator, at two fleet widths
+
+Both runs use the identical policy and differ only in how much structure the fleet has.
+Each reports a **fourth pass** in the same run, on byte-identical records, with the
+blast-radius test switched off -- so the topology's contribution is an ablation rather than
+a comparison across runs whose window boundaries fall differently.
+
+#### v4, 12 channels -- three machines, one cabinet, one ring
+
+```
+python evaluate.py --duration 900 --rate 400 --channels 12 \
+    --deploys-per-hour 60 --faults-per-hour 120 \
+    --report-json docs/results/paired-evaluation-v4-topology.json
+```
+
+| Measure | Shadow | Conditioned | Delta |
+|---|---|---|---|
+| Episodes recorded | 76 | 76 | |
+| Pages raised | 76 | 66 | -10 |
+| False pages (artifact + unexplained) | 53 | 43 | **-10** |
+| of which artifact-driven | 35 | 26 | -9 |
+| Recall, all real faults (incidents) | 93.3% (28/30) | 90.0% (27/30) | **-3.3%** |
+| Recall, faults **outside** windows | 87.5% (14/16) | 87.5% (14/16) | **+0.0%** |
+| Recall, faults **inside** windows | 100.0% (14/14) | 92.9% (13/14) | -7.1% |
+| Recall, faults in **quiet** windows | 100.0% (7/7) | 100.0% (7/7) | **+0.0%** |
+| Recall, per fault channel-episode | 89.5% (51/57) | 82.5% (47/57) | -7.0% |
+| Precision (incident-level) | 30.3% | 34.8% | +4.6% |
+
+**false-positive reduction +18.9% (target >= 40%, missed) -- recall loss +3.3%
+(tolerance <= 5%, MET). NFR-8 NOT MET.** Fail-open held, 76 of 76.
+
+Ablation, same records: **timing only +17.0% / -3.3%, with blast radius +18.9% / -3.3%.**
+
+The topology test barely runs here, and the reason is in the fleet rather than in the
+policy: 12 channels is three pumps in one cabinet on one ring, so the rack and ring levels
+carry no information and only "did this span two machines" can fire. It fired **once** in
+289 rejections. The difference between the two columns is one attribution, which is noise
+at this count -- an earlier run of the same configuration had the sign the other way
+(`docs/results/paired-evaluation-v4-topology-prefix-g16.json`, +18.3% with the test against
++21.7% without). **At this fleet width the honest finding is that the discriminator has
+nothing to discriminate on.**
+
+#### v4w, 24 channels -- six machines, two cabinets, two rings
+
+Per-channel sampling rate is held constant (800 ev/s over 24 channels is the same 33 Hz per
+channel as 400 over 12), because the z-score scales with the square root of the window's
+point count and halving it would move the detector's operating point inside the comparison.
+
+```
+python evaluate.py --duration 900 --rate 800 --channels 24 \
+    --deploys-per-hour 60 --faults-per-hour 120 \
+    --report-json docs/results/paired-evaluation-v4w-topology-wide.json
+```
+
+| Measure | Shadow | Conditioned | Delta |
+|---|---|---|---|
+| Episodes recorded | 147 | 147 | |
+| Pages raised | 147 | 141 | -6 |
+| False pages (artifact + unexplained) | 112 | 108 | **-4** |
+| of which artifact-driven | 37 | 33 | -4 |
+| Recall, all real faults (incidents) | 93.3% (28/30) | 90.0% (27/30) | **-3.3%** |
+| Recall, faults **outside** windows | 93.8% (15/16) | 93.8% (15/16) | **+0.0%** |
+| Recall, faults **inside** windows | 92.9% (13/14) | 85.7% (12/14) | -7.1% |
+| Recall, faults in **quiet** windows | 100.0% (7/7) | 100.0% (7/7) | **+0.0%** |
+| Recall, per fault channel-episode | 86.0% (49/57) | 82.5% (47/57) | -3.5% |
+| Precision (incident-level) | 23.8% | 23.4% | -0.4% |
+
+**false-positive reduction +3.6% (target >= 40%, missed) -- recall loss +3.3%
+(tolerance <= 5%, MET). NFR-8 NOT MET.** Fail-open held, 147 of 147.
+
+#### The ablation, which is the actual measurement
+
+| Same records, same run | FP reduction | Recall loss | Attributed | Single-sensor faults kept |
+|---|---|---|---|---|
+| timing and scope only | **+8.0%** | **-6.7%** | 11 of 147 | 12/15 |
+| **with the blast-radius test** | **+3.6%** | **-3.3%** | 6 of 147 | **13/15** |
+
+The topology test refused 5 attributions. Doing so **halved the recall loss**, from 6.7% to
+3.3%, and recovered a real fault the timing-only policy attributed away -- and it cost 4.4
+points of false-positive reduction. The verdict record says which test did it:
+
+```
+corroborated=6, fault_domain=4, narrow_blast_radius=1, isolated=46, implausible=90
+rejections reached: fault_domain=5, narrow_blast_radius=2, isolated=61,
+                    implausible=423, out_of_scope=148
+```
+
+Five `fault_domain` refusals -- "every channel that moved sits on pump-02, while deploy-0007
+reached three machines" -- and two `narrow_blast_radius`, single-machine canary rollouts
+that no evidence could separate from a fault. Against one refusal at 12 channels. **The
+discriminator fires where the topology has structure and is inert where it does not**,
+which is what it claims to do, and both fleet widths are published so the claim is bounded
+by the width it was measured at.
+
+### 3.11 All seven measurements, and what v4 settles
+
+| Run | What changed | FP reduction | Recall loss | Quiet-window recall | NFR-8 |
+|---|---|---|---|---|---|
+| **v1** | corroboration by co-occurrence in a 30 s window | **+60.9%** | **-36.7%** | -100.0% | missed |
+| **v2** | required synchrony, compared on window starts | +9.0% | -10.0% | -33.3% | missed |
+| **low density** | 20 deploys/hour instead of 60 | +6.7% | -6.7% | +0.0% | missed |
+| **v3** | required synchrony, compared on **true onsets** | +11.1% | -6.7% | -33.3% | missed |
+| **v4a** | same policy, evidence made **present** (ADR-037) | **+27.8%** | **-16.7%** | +0.0% | missed |
+| **v4** | topology discriminator, 12 ch (3 machines, 1 cabinet) | +18.9% | **-3.3%** | +0.0% | missed |
+| **v4w** | topology discriminator, 24 ch (6 machines, 2 cabinets) | +3.6% | **-3.3%** | +0.0% | missed |
+
+v4a shares the v1-v3 scenario; v4 and v4w share a different one (section 3.9). Read the last
+three rows against their own shadow passes and their own ablations, not against the first
+four.
+
+**NFR-8 is not met, for the fifth measurement.** The reduction is +18.9% at 12 channels and
++3.6% at 24, against a 40% target.
+
+#### What v4 established that the four before it could not
+
+**The corroboration test was never starved of evidence in the way it appeared to be, and it
+was never silent.** Both of those were artefacts. G-7 was real -- in-scope siblings now
+appear in 58 of 69 scoped decisions at 12 channels -- and G-16 was a reporting defect that
+made every run print `isolated=0`. With both fixed the record reads `isolated=46` at 24
+channels: the corroboration test concludes "this channel moved alone" constantly, and always
+did.
+
+**Timing is the wrong axis, and now there is a measurement rather than an argument.** v4a
+put complete evidence behind v3's criterion and the criterion promptly attributed real
+faults: +27.8% reduction bought at -16.7% recall, ten points worse than v3 managed while
+half-blind. A machine failing is synchronous within its own scope, so on the axis synchrony
+measures, a seizing pump and a rollout are the same event.
+
+**Shape separates what timing cannot, by the amount the ablation says and no more.** Five
+refusals at 24 channels halved the recall loss and cost 4.4 points of reduction. That is a
+real effect, on byte-identical records within one run, in the direction the mechanism
+predicts. It is also small.
+
+**The recall half of NFR-8 is met for the first time**, in both v4 runs (-3.3% against a 5%
+tolerance) with quiet-window recall untouched at 7/7. Every earlier run failed it. What
+fails now is the reduction half, and at 24 channels it fails worse than v3 did -- because
+each of the three fixes makes the policy *more* reluctant to attribute, and reluctance is
+what the reduction target punishes.
+
+#### Where this leaves the mechanism, and the ceiling nobody had computed
+
+The **plausibility half continues to work** in every run: 90 of 147 episodes overlapping a
+pipeline event that had lost nothing were raised as `implausible`. **Fail-open holds end to
+end** in all seven runs, 147 of 147 in the largest.
+
+The **corroboration half still does not reach NFR-8**, and after v4 the reason is no longer
+that the test cannot see or cannot fire. It sees, it fires, and it is right more often than
+before. There is simply not enough attributable noise in these runs for a policy this
+conservative to remove 40% of the false pages -- and the arithmetic is worth stating,
+because it was never done in v1 to v3:
+
+> At 24 channels, **75 of the 112 false pages are `unexplained`** rather than
+> artifact-driven. They overlap no injected excursion of any kind, so no context signal can
+> attribute them, correctly or otherwise. The ceiling on any conditioning policy in that run
+> is therefore **37/112 = 33%**, reached only by attributing every single artifact page and
+> never being wrong. **The 40% target was unreachable on that run before the policy made a
+> single decision.** At 12 channels the ceiling is 35/53 = 66%, and +18.9% is 29% of it.
+
+That is a property of the detector's false-positive mix, not of the discriminator, and it is
+the first thing a v5 has to confront. It is also a decision for the architect rather than an
+implementation choice, so it is recorded as **B-6**: either the reduction is measured against
+the attributable subset -- which changes what NFR-8 means and must be argued for, not
+adopted quietly because it flatters the number -- or the unexplained pages are reduced at the
+detector, which is a detection problem rather than a conditioning one.
+
+**NFR-8 is reported as not met.** The pair is +18.9% / -3.3% at 12 channels and +3.6% /
+-3.3% at 24, against +40% / -5%.
 
 ## 4. Q2 — detector vs. baseline on TSB-AD-M
 

@@ -35,7 +35,7 @@ below comes from a command recorded in `docs/EVALUATION.md`.
 | Flink exactly-once, **across a crash** | TaskManager SIGKILLed mid-checkpoint: restored from checkpoint 5, recovered in **14.9 s**, and a `read_committed` consumer saw **328 window scores with 0 duplicates** |
 | Detection benchmark, 144 labelled series | z-score median AUC-PR **0.198** against Chronos-Bolt-tiny **0.152**, 78 wins to 56, at **141x less compute**. The foundation model loses |
 | Agent quality gate | 400 episodes, 1,267 actions: **100%** grounded, gate-approved and sandboxed; 97.1% carrying a runbook citation |
-| Context conditioning vs. the unconditioned baseline | +11.1% false-page reduction against a 40% target, -6.7% recall against a 5% tolerance. **NFR-8: not met, in four measurements** |
+| Context conditioning vs. the unconditioned baseline | +18.9% false-page reduction against a 40% target, -3.3% recall against a 5% tolerance. **NFR-8: not met, in seven measurements.** The recall half is met for the first time; the reduction half was arithmetically unreachable on the wide run, where 75 of 112 false pages overlap no injected excursion at all |
 | Live feed | 1,387 MQTT messages -> 11,089 readings across 336 channels in 45 s, 0 gaps |
 | Tests | **524** (unit, plus integration against real Kafka, Postgres and a live Flink cluster) |
 

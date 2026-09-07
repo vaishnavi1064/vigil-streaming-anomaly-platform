@@ -1,6 +1,6 @@
 {
   "seed": "synthetic-fleet:24ch",
-  "t0_wall_ms": 1788819908236,
+  "t0_wall_ms": 1788822166082,
   "duration_s": 900.0,
   "channels": [
     "pump-00.vibration_mm_s",
@@ -33,8 +33,8 @@
       "event": {
         "event_id": "deploy-0001",
         "kind": "deploy",
-        "t_start_ms": 1788820039693,
-        "t_end_ms": 1788820136435,
+        "t_start_ms": 1788822297539,
+        "t_end_ms": 1788822394281,
         "severity": "info",
         "detail": "restart of the site-rollup aggregator after v1.11.1 deploy",
         "scope": [
@@ -54,8 +54,8 @@
       "event": {
         "event_id": "deploy-0002",
         "kind": "deploy",
-        "t_start_ms": 1788820107537,
-        "t_end_ms": 1788820173839,
+        "t_start_ms": 1788822365383,
+        "t_end_ms": 1788822431685,
         "severity": "warning",
         "detail": "canary of string-normaliser v1.2.3 on the nevada fleet",
         "scope": [
@@ -79,8 +79,8 @@
           {
             "kind": "variance_burst",
             "origin": "deploy",
-            "t_start_ms": 1788820119129,
-            "t_end_ms": 1788820147343,
+            "t_start_ms": 1788822376975,
+            "t_end_ms": 1788822405189,
             "magnitude_sigma": -7.3064239719854225,
             "incident": "deploy-0002",
             "domain": "ring"
@@ -90,8 +90,8 @@
           {
             "kind": "spike",
             "origin": "deploy",
-            "t_start_ms": 1788820108786,
-            "t_end_ms": 1788820108786,
+            "t_start_ms": 1788822366632,
+            "t_end_ms": 1788822366632,
             "magnitude_sigma": -6.741308472938247,
             "incident": "deploy-0002",
             "domain": "ring"
@@ -101,8 +101,8 @@
           {
             "kind": "spike",
             "origin": "deploy",
-            "t_start_ms": 1788820122146,
-            "t_end_ms": 1788820122146,
+            "t_start_ms": 1788822379992,
+            "t_end_ms": 1788822379992,
             "magnitude_sigma": 7.231104082116962,
             "incident": "deploy-0002",
             "domain": "ring"
@@ -112,8 +112,8 @@
           {
             "kind": "level_shift",
             "origin": "deploy",
-            "t_start_ms": 1788820120108,
-            "t_end_ms": 1788820161716,
+            "t_start_ms": 1788822377954,
+            "t_end_ms": 1788822419562,
             "magnitude_sigma": -7.801134864894013,
             "incident": "deploy-0002",
             "domain": "ring"
@@ -123,8 +123,8 @@
           {
             "kind": "level_shift",
             "origin": "deploy",
-            "t_start_ms": 1788820112622,
-            "t_end_ms": 1788820171828,
+            "t_start_ms": 1788822370468,
+            "t_end_ms": 1788822429674,
             "magnitude_sigma": 5.291665828377697,
             "incident": "deploy-0002",
             "domain": "ring"
@@ -134,8 +134,8 @@
           {
             "kind": "spike",
             "origin": "deploy",
-            "t_start_ms": 1788820127109,
-            "t_end_ms": 1788820127109,
+            "t_start_ms": 1788822384955,
+            "t_end_ms": 1788822384955,
             "magnitude_sigma": -6.124034822807641,
             "incident": "deploy-0002",
             "domain": "ring"
@@ -145,8 +145,8 @@
           {
             "kind": "spike",
             "origin": "deploy",
-            "t_start_ms": 1788820125643,
-            "t_end_ms": 1788820125643,
+            "t_start_ms": 1788822383489,
+            "t_end_ms": 1788822383489,
             "magnitude_sigma": -4.188236408281753,
             "incident": "deploy-0002",
             "domain": "ring"
@@ -156,8 +156,8 @@
           {
             "kind": "spike",
             "origin": "deploy",
-            "t_start_ms": 1788820126345,
-            "t_end_ms": 1788820126345,
+            "t_start_ms": 1788822384191,
+            "t_end_ms": 1788822384191,
             "magnitude_sigma": -4.674207139816433,
             "incident": "deploy-0002",
             "domain": "ring"
@@ -167,8 +167,8 @@
           {
             "kind": "level_shift",
             "origin": "deploy",
-            "t_start_ms": 1788820114297,
-            "t_end_ms": 1788820170945,
+            "t_start_ms": 1788822372143,
+            "t_end_ms": 1788822428791,
             "magnitude_sigma": -6.446383249613087,
             "incident": "deploy-0002",
             "domain": "ring"
@@ -178,8 +178,8 @@
           {
             "kind": "spike",
             "origin": "deploy",
-            "t_start_ms": 1788820117670,
-            "t_end_ms": 1788820117670,
+            "t_start_ms": 1788822375516,
+            "t_end_ms": 1788822375516,
             "magnitude_sigma": -7.539162792760732,
             "incident": "deploy-0002",
             "domain": "ring"
@@ -189,8 +189,8 @@
           {
             "kind": "spike",
             "origin": "deploy",
-            "t_start_ms": 1788820111563,
-            "t_end_ms": 1788820111563,
+            "t_start_ms": 1788822369409,
+            "t_end_ms": 1788822369409,
             "magnitude_sigma": 6.3051813839570645,
             "incident": "deploy-0002",
             "domain": "ring"
@@ -200,8 +200,8 @@
           {
             "kind": "variance_burst",
             "origin": "deploy",
-            "t_start_ms": 1788820109064,
-            "t_end_ms": 1788820134048,
+            "t_start_ms": 1788822366910,
+            "t_end_ms": 1788822391894,
             "magnitude_sigma": -6.488743627847029,
             "incident": "deploy-0002",
             "domain": "ring"
@@ -219,8 +219,8 @@
       "event": {
         "event_id": "deploy-0003",
         "kind": "deploy",
-        "t_start_ms": 1788820141473,
-        "t_end_ms": 1788820222004,
+        "t_start_ms": 1788822399319,
+        "t_end_ms": 1788822479850,
         "severity": "info",
         "detail": "config change: scrape interval lowered on the arizona fleet (v1.5.0)",
         "scope": [
@@ -242,8 +242,8 @@
       "event": {
         "event_id": "deploy-0004",
         "kind": "deploy",
-        "t_start_ms": 1788820463826,
-        "t_end_ms": 1788820531240,
+        "t_start_ms": 1788822721672,
+        "t_end_ms": 1788822789086,
         "severity": "warning",
         "detail": "canary of string-normaliser v1.30.7 on the california fleet",
         "scope": [
@@ -261,8 +261,8 @@
           {
             "kind": "variance_burst",
             "origin": "deploy",
-            "t_start_ms": 1788820483872,
-            "t_end_ms": 1788820501564,
+            "t_start_ms": 1788822741718,
+            "t_end_ms": 1788822759410,
             "magnitude_sigma": -4.463604604575331,
             "incident": "deploy-0004",
             "domain": "ring"
@@ -272,8 +272,8 @@
           {
             "kind": "level_shift",
             "origin": "deploy",
-            "t_start_ms": 1788820471675,
-            "t_end_ms": 1788820495587,
+            "t_start_ms": 1788822729521,
+            "t_end_ms": 1788822753433,
             "magnitude_sigma": 4.9682679777994885,
             "incident": "deploy-0004",
             "domain": "ring"
@@ -283,8 +283,8 @@
           {
             "kind": "variance_burst",
             "origin": "deploy",
-            "t_start_ms": 1788820471618,
-            "t_end_ms": 1788820502055,
+            "t_start_ms": 1788822729464,
+            "t_end_ms": 1788822759901,
             "magnitude_sigma": 7.1820632324516325,
             "incident": "deploy-0004",
             "domain": "ring"
@@ -294,8 +294,8 @@
           {
             "kind": "spike",
             "origin": "deploy",
-            "t_start_ms": 1788820466063,
-            "t_end_ms": 1788820466063,
+            "t_start_ms": 1788822723909,
+            "t_end_ms": 1788822723909,
             "magnitude_sigma": 6.0208899319082025,
             "incident": "deploy-0004",
             "domain": "ring"
@@ -305,8 +305,8 @@
           {
             "kind": "level_shift",
             "origin": "deploy",
-            "t_start_ms": 1788820472196,
-            "t_end_ms": 1788820515442,
+            "t_start_ms": 1788822730042,
+            "t_end_ms": 1788822773288,
             "magnitude_sigma": 7.253901697552026,
             "incident": "deploy-0004",
             "domain": "ring"
@@ -316,8 +316,8 @@
           {
             "kind": "level_shift",
             "origin": "deploy",
-            "t_start_ms": 1788820474094,
-            "t_end_ms": 1788820519984,
+            "t_start_ms": 1788822731940,
+            "t_end_ms": 1788822777830,
             "magnitude_sigma": 7.859791765582371,
             "incident": "deploy-0004",
             "domain": "ring"
@@ -334,8 +334,8 @@
       "event": {
         "event_id": "deploy-0005",
         "kind": "deploy",
-        "t_start_ms": 1788820536947,
-        "t_end_ms": 1788820688202,
+        "t_start_ms": 1788822794793,
+        "t_end_ms": 1788822946048,
         "severity": "info",
         "detail": "canary of string-normaliser v1.7.9 on the nevada fleet",
         "scope": [
@@ -359,8 +359,8 @@
       "event": {
         "event_id": "deploy-0006",
         "kind": "deploy",
-        "t_start_ms": 1788820588650,
-        "t_end_ms": 1788820678751,
+        "t_start_ms": 1788822846496,
+        "t_end_ms": 1788822936597,
         "severity": "warning",
         "detail": "config change: scrape interval lowered on the arizona fleet (v1.3.1)",
         "scope": [
@@ -373,8 +373,8 @@
           {
             "kind": "variance_burst",
             "origin": "deploy",
-            "t_start_ms": 1788820619434,
-            "t_end_ms": 1788820688890,
+            "t_start_ms": 1788822877280,
+            "t_end_ms": 1788822946736,
             "magnitude_sigma": 4.10869864951593,
             "incident": "deploy-0006",
             "domain": "ring"
@@ -390,8 +390,8 @@
       "event": {
         "event_id": "deploy-0007",
         "kind": "deploy",
-        "t_start_ms": 1788820676701,
-        "t_end_ms": 1788820740890,
+        "t_start_ms": 1788822934547,
+        "t_end_ms": 1788822998736,
         "severity": "warning",
         "detail": "config change: scrape interval lowered on the arizona fleet (v1.22.9)",
         "scope": [
@@ -412,8 +412,8 @@
           {
             "kind": "level_shift",
             "origin": "deploy",
-            "t_start_ms": 1788820693734,
-            "t_end_ms": 1788820709646,
+            "t_start_ms": 1788822951580,
+            "t_end_ms": 1788822967492,
             "magnitude_sigma": 4.044476022432786,
             "incident": "deploy-0007",
             "domain": "ring"
@@ -423,8 +423,8 @@
           {
             "kind": "spike",
             "origin": "deploy",
-            "t_start_ms": 1788820695199,
-            "t_end_ms": 1788820695199,
+            "t_start_ms": 1788822953045,
+            "t_end_ms": 1788822953045,
             "magnitude_sigma": 3.7568579928025625,
             "incident": "deploy-0007",
             "domain": "ring"
@@ -434,8 +434,8 @@
           {
             "kind": "spike",
             "origin": "deploy",
-            "t_start_ms": 1788820698027,
-            "t_end_ms": 1788820698027,
+            "t_start_ms": 1788822955873,
+            "t_end_ms": 1788822955873,
             "magnitude_sigma": 6.40337699289185,
             "incident": "deploy-0007",
             "domain": "ring"
@@ -445,8 +445,8 @@
           {
             "kind": "variance_burst",
             "origin": "deploy",
-            "t_start_ms": 1788820696828,
-            "t_end_ms": 1788820722352,
+            "t_start_ms": 1788822954674,
+            "t_end_ms": 1788822980198,
             "magnitude_sigma": -4.321024264473171,
             "incident": "deploy-0007",
             "domain": "ring"
@@ -456,8 +456,8 @@
           {
             "kind": "spike",
             "origin": "deploy",
-            "t_start_ms": 1788820695679,
-            "t_end_ms": 1788820695679,
+            "t_start_ms": 1788822953525,
+            "t_end_ms": 1788822953525,
             "magnitude_sigma": 3.8873795529255055,
             "incident": "deploy-0007",
             "domain": "ring"
@@ -467,8 +467,8 @@
           {
             "kind": "level_shift",
             "origin": "deploy",
-            "t_start_ms": 1788820697936,
-            "t_end_ms": 1788820759706,
+            "t_start_ms": 1788822955782,
+            "t_end_ms": 1788823017552,
             "magnitude_sigma": 7.905372404817664,
             "incident": "deploy-0007",
             "domain": "ring"
@@ -478,8 +478,8 @@
           {
             "kind": "level_shift",
             "origin": "deploy",
-            "t_start_ms": 1788820701645,
-            "t_end_ms": 1788820732158,
+            "t_start_ms": 1788822959491,
+            "t_end_ms": 1788822990004,
             "magnitude_sigma": -5.623521736580221,
             "incident": "deploy-0007",
             "domain": "ring"
@@ -489,8 +489,8 @@
           {
             "kind": "variance_burst",
             "origin": "deploy",
-            "t_start_ms": 1788820697420,
-            "t_end_ms": 1788820727445,
+            "t_start_ms": 1788822955266,
+            "t_end_ms": 1788822985291,
             "magnitude_sigma": 5.260709036713793,
             "incident": "deploy-0007",
             "domain": "ring"
@@ -500,8 +500,8 @@
           {
             "kind": "spike",
             "origin": "deploy",
-            "t_start_ms": 1788820688857,
-            "t_end_ms": 1788820688857,
+            "t_start_ms": 1788822946703,
+            "t_end_ms": 1788822946703,
             "magnitude_sigma": 4.599308051639294,
             "incident": "deploy-0007",
             "domain": "ring"
@@ -519,8 +519,8 @@
       "event": {
         "event_id": "deploy-0008",
         "kind": "deploy",
-        "t_start_ms": 1788820693282,
-        "t_end_ms": 1788820759932,
+        "t_start_ms": 1788822951128,
+        "t_end_ms": 1788823017778,
         "severity": "info",
         "detail": "canary of string-normaliser v1.36.8 on the nevada fleet",
         "scope": [
@@ -551,8 +551,8 @@
       "event": {
         "event_id": "deploy-0009",
         "kind": "deploy",
-        "t_start_ms": 1788820696529,
-        "t_end_ms": 1788820808236,
+        "t_start_ms": 1788822954375,
+        "t_end_ms": 1788823066082,
         "severity": "warning",
         "detail": "rollout of inverter-telemetry-collector v1.5.7 to the arizona fleet",
         "scope": [
@@ -570,8 +570,8 @@
           {
             "kind": "variance_burst",
             "origin": "deploy",
-            "t_start_ms": 1788820720925,
-            "t_end_ms": 1788820763592,
+            "t_start_ms": 1788822978771,
+            "t_end_ms": 1788823021438,
             "magnitude_sigma": 3.7384631106938437,
             "incident": "deploy-0009",
             "domain": "ring"
@@ -581,8 +581,8 @@
           {
             "kind": "variance_burst",
             "origin": "deploy",
-            "t_start_ms": 1788820717556,
-            "t_end_ms": 1788820734645,
+            "t_start_ms": 1788822975402,
+            "t_end_ms": 1788822992491,
             "magnitude_sigma": -4.262779681541073,
             "incident": "deploy-0009",
             "domain": "ring"
@@ -592,8 +592,8 @@
           {
             "kind": "level_shift",
             "origin": "deploy",
-            "t_start_ms": 1788820722174,
-            "t_end_ms": 1788820787386,
+            "t_start_ms": 1788822980020,
+            "t_end_ms": 1788823045232,
             "magnitude_sigma": 4.362732253001461,
             "incident": "deploy-0009",
             "domain": "ring"
@@ -603,8 +603,8 @@
           {
             "kind": "level_shift",
             "origin": "deploy",
-            "t_start_ms": 1788820740938,
-            "t_end_ms": 1788820782910,
+            "t_start_ms": 1788822998784,
+            "t_end_ms": 1788823040756,
             "magnitude_sigma": -4.354003786161311,
             "incident": "deploy-0009",
             "domain": "ring"
@@ -614,8 +614,8 @@
           {
             "kind": "variance_burst",
             "origin": "deploy",
-            "t_start_ms": 1788820731385,
-            "t_end_ms": 1788820751722,
+            "t_start_ms": 1788822989231,
+            "t_end_ms": 1788823009568,
             "magnitude_sigma": -4.838382413048947,
             "incident": "deploy-0009",
             "domain": "ring"
@@ -625,8 +625,8 @@
           {
             "kind": "level_shift",
             "origin": "deploy",
-            "t_start_ms": 1788820739537,
-            "t_end_ms": 1788820779611,
+            "t_start_ms": 1788822997383,
+            "t_end_ms": 1788823037457,
             "magnitude_sigma": 7.781080092229119,
             "incident": "deploy-0009",
             "domain": "ring"
@@ -644,8 +644,8 @@
       "event": {
         "event_id": "deploy-0010",
         "kind": "deploy",
-        "t_start_ms": 1788820736023,
-        "t_end_ms": 1788820808236,
+        "t_start_ms": 1788822993869,
+        "t_end_ms": 1788823066082,
         "severity": "warning",
         "detail": "rollout of inverter-telemetry-collector v1.39.8 to the california fleet",
         "scope": [
@@ -666,8 +666,8 @@
           {
             "kind": "spike",
             "origin": "deploy",
-            "t_start_ms": 1788820748007,
-            "t_end_ms": 1788820748007,
+            "t_start_ms": 1788823005853,
+            "t_end_ms": 1788823005853,
             "magnitude_sigma": 6.222542659086812,
             "incident": "deploy-0010",
             "domain": "ring"
@@ -677,8 +677,8 @@
           {
             "kind": "variance_burst",
             "origin": "deploy",
-            "t_start_ms": 1788820762890,
-            "t_end_ms": 1788820826620,
+            "t_start_ms": 1788823020736,
+            "t_end_ms": 1788823084466,
             "magnitude_sigma": 7.46798364047117,
             "incident": "deploy-0010",
             "domain": "ring"
@@ -688,8 +688,8 @@
           {
             "kind": "level_shift",
             "origin": "deploy",
-            "t_start_ms": 1788820759505,
-            "t_end_ms": 1788820792489,
+            "t_start_ms": 1788823017351,
+            "t_end_ms": 1788823050335,
             "magnitude_sigma": 4.218678042772611,
             "incident": "deploy-0010",
             "domain": "ring"
@@ -699,8 +699,8 @@
           {
             "kind": "level_shift",
             "origin": "deploy",
-            "t_start_ms": 1788820744503,
-            "t_end_ms": 1788820800193,
+            "t_start_ms": 1788823002349,
+            "t_end_ms": 1788823058039,
             "magnitude_sigma": 5.802025012704608,
             "incident": "deploy-0010",
             "domain": "ring"
@@ -710,8 +710,8 @@
           {
             "kind": "variance_burst",
             "origin": "deploy",
-            "t_start_ms": 1788820750347,
-            "t_end_ms": 1788820812802,
+            "t_start_ms": 1788823008193,
+            "t_end_ms": 1788823070648,
             "magnitude_sigma": -6.852126546733874,
             "incident": "deploy-0010",
             "domain": "ring"
@@ -721,8 +721,8 @@
           {
             "kind": "level_shift",
             "origin": "deploy",
-            "t_start_ms": 1788820739925,
-            "t_end_ms": 1788820773579,
+            "t_start_ms": 1788822997771,
+            "t_end_ms": 1788823031425,
             "magnitude_sigma": -4.331477903555967,
             "incident": "deploy-0010",
             "domain": "ring"
@@ -732,8 +732,8 @@
           {
             "kind": "variance_burst",
             "origin": "deploy",
-            "t_start_ms": 1788820763028,
-            "t_end_ms": 1788820808093,
+            "t_start_ms": 1788823020874,
+            "t_end_ms": 1788823065939,
             "magnitude_sigma": 6.555713153125114,
             "incident": "deploy-0010",
             "domain": "ring"
@@ -743,8 +743,8 @@
           {
             "kind": "level_shift",
             "origin": "deploy",
-            "t_start_ms": 1788820753496,
-            "t_end_ms": 1788820773226,
+            "t_start_ms": 1788823011342,
+            "t_end_ms": 1788823031072,
             "magnitude_sigma": 3.5626789033443793,
             "incident": "deploy-0010",
             "domain": "ring"
@@ -754,8 +754,8 @@
           {
             "kind": "level_shift",
             "origin": "deploy",
-            "t_start_ms": 1788820747204,
-            "t_end_ms": 1788820793343,
+            "t_start_ms": 1788823005050,
+            "t_end_ms": 1788823051189,
             "magnitude_sigma": 5.846995066568949,
             "incident": "deploy-0010",
             "domain": "ring"
@@ -773,8 +773,8 @@
       "event": {
         "event_id": "deploy-0011",
         "kind": "deploy",
-        "t_start_ms": 1788820802387,
-        "t_end_ms": 1788820808236,
+        "t_start_ms": 1788823060233,
+        "t_end_ms": 1788823066082,
         "severity": "info",
         "detail": "canary of string-normaliser v1.37.9 on the arizona fleet",
         "scope": [
@@ -796,8 +796,8 @@
       {
         "kind": "level_shift",
         "origin": "fault",
-        "t_start_ms": 1788819961272,
-        "t_end_ms": 1788820026597,
+        "t_start_ms": 1788822219118,
+        "t_end_ms": 1788822284443,
         "magnitude_sigma": 8.656137518431844,
         "incident": "fault-0021",
         "domain": "node"
@@ -805,8 +805,8 @@
       {
         "kind": "level_shift",
         "origin": "fault",
-        "t_start_ms": 1788820559701,
-        "t_end_ms": 1788820641657,
+        "t_start_ms": 1788822817547,
+        "t_end_ms": 1788822899503,
         "magnitude_sigma": -5.8695055251793296,
         "incident": "fault-0008",
         "domain": "node"
@@ -814,8 +814,8 @@
       {
         "kind": "level_shift",
         "origin": "fault",
-        "t_start_ms": 1788820644621,
-        "t_end_ms": 1788820711817,
+        "t_start_ms": 1788822902467,
+        "t_end_ms": 1788822969663,
         "magnitude_sigma": 5.588839819100895,
         "incident": "fault-0001",
         "domain": "rack"
@@ -825,8 +825,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788819962118,
-        "t_end_ms": 1788820025996,
+        "t_start_ms": 1788822219964,
+        "t_end_ms": 1788822283842,
         "magnitude_sigma": 7.44614217710265,
         "incident": "fault-0021",
         "domain": "node"
@@ -834,8 +834,8 @@
       {
         "kind": "spike",
         "origin": "fault",
-        "t_start_ms": 1788820642909,
-        "t_end_ms": 1788820642909,
+        "t_start_ms": 1788822900755,
+        "t_end_ms": 1788822900755,
         "magnitude_sigma": -4.4173031725601835,
         "incident": "fault-0001",
         "domain": "rack"
@@ -843,8 +843,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788820743774,
-        "t_end_ms": 1788820777911,
+        "t_start_ms": 1788823001620,
+        "t_end_ms": 1788823035757,
         "magnitude_sigma": -4.594026092563734,
         "incident": "fault-0011",
         "domain": "node"
@@ -854,8 +854,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788819976946,
-        "t_end_ms": 1788820046512,
+        "t_start_ms": 1788822234792,
+        "t_end_ms": 1788822304358,
         "magnitude_sigma": 6.995208699608563,
         "incident": "fault-0019",
         "domain": "channel"
@@ -863,8 +863,8 @@
       {
         "kind": "level_shift",
         "origin": "fault",
-        "t_start_ms": 1788820432821,
-        "t_end_ms": 1788820459528,
+        "t_start_ms": 1788822690667,
+        "t_end_ms": 1788822717374,
         "magnitude_sigma": 7.302092083713527,
         "incident": "fault-0017",
         "domain": "node"
@@ -872,8 +872,8 @@
       {
         "kind": "level_shift",
         "origin": "fault",
-        "t_start_ms": 1788820641527,
-        "t_end_ms": 1788820670353,
+        "t_start_ms": 1788822899373,
+        "t_end_ms": 1788822928199,
         "magnitude_sigma": -4.042475416018306,
         "incident": "fault-0001",
         "domain": "rack"
@@ -883,8 +883,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788820363410,
-        "t_end_ms": 1788820437603,
+        "t_start_ms": 1788822621256,
+        "t_end_ms": 1788822695449,
         "magnitude_sigma": -7.2705968036888375,
         "incident": "fault-0023",
         "domain": "channel"
@@ -892,8 +892,8 @@
       {
         "kind": "spike",
         "origin": "fault",
-        "t_start_ms": 1788820435968,
-        "t_end_ms": 1788820435968,
+        "t_start_ms": 1788822693814,
+        "t_end_ms": 1788822693814,
         "magnitude_sigma": -6.253546401017159,
         "incident": "fault-0017",
         "domain": "node"
@@ -901,8 +901,8 @@
       {
         "kind": "spike",
         "origin": "fault",
-        "t_start_ms": 1788820644116,
-        "t_end_ms": 1788820644116,
+        "t_start_ms": 1788822901962,
+        "t_end_ms": 1788822901962,
         "magnitude_sigma": -5.695206615156325,
         "incident": "fault-0001",
         "domain": "rack"
@@ -912,8 +912,8 @@
       {
         "kind": "level_shift",
         "origin": "fault",
-        "t_start_ms": 1788820485523,
-        "t_end_ms": 1788820569639,
+        "t_start_ms": 1788822743369,
+        "t_end_ms": 1788822827485,
         "magnitude_sigma": 7.807529989601285,
         "incident": "fault-0002",
         "domain": "node"
@@ -921,8 +921,8 @@
       {
         "kind": "level_shift",
         "origin": "fault",
-        "t_start_ms": 1788820807509,
-        "t_end_ms": 1788820893426,
+        "t_start_ms": 1788823065355,
+        "t_end_ms": 1788823151272,
         "magnitude_sigma": 5.868239966800004,
         "incident": "fault-0012",
         "domain": "channel"
@@ -932,8 +932,8 @@
       {
         "kind": "spike",
         "origin": "fault",
-        "t_start_ms": 1788820414847,
-        "t_end_ms": 1788820414847,
+        "t_start_ms": 1788822672693,
+        "t_end_ms": 1788822672693,
         "magnitude_sigma": 8.017096221836821,
         "incident": "fault-0026",
         "domain": "node"
@@ -941,8 +941,8 @@
       {
         "kind": "level_shift",
         "origin": "fault",
-        "t_start_ms": 1788820484129,
-        "t_end_ms": 1788820572247,
+        "t_start_ms": 1788822741975,
+        "t_end_ms": 1788822830093,
         "magnitude_sigma": -6.158514785335926,
         "incident": "fault-0002",
         "domain": "node"
@@ -952,8 +952,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788820221002,
-        "t_end_ms": 1788820255437,
+        "t_start_ms": 1788822478848,
+        "t_end_ms": 1788822513283,
         "magnitude_sigma": 4.458122344758875,
         "incident": "fault-0009",
         "domain": "channel"
@@ -961,8 +961,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788820341916,
-        "t_end_ms": 1788820383847,
+        "t_start_ms": 1788822599762,
+        "t_end_ms": 1788822641693,
         "magnitude_sigma": 5.634965851438389,
         "incident": "fault-0014",
         "domain": "channel"
@@ -970,8 +970,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788820414111,
-        "t_end_ms": 1788820488074,
+        "t_start_ms": 1788822671957,
+        "t_end_ms": 1788822745920,
         "magnitude_sigma": -6.661637072857486,
         "incident": "fault-0026",
         "domain": "node"
@@ -979,8 +979,8 @@
       {
         "kind": "level_shift",
         "origin": "fault",
-        "t_start_ms": 1788820482556,
-        "t_end_ms": 1788820509864,
+        "t_start_ms": 1788822740402,
+        "t_end_ms": 1788822767710,
         "magnitude_sigma": -6.963963600398159,
         "incident": "fault-0002",
         "domain": "node"
@@ -988,8 +988,8 @@
       {
         "kind": "spike",
         "origin": "fault",
-        "t_start_ms": 1788820785755,
-        "t_end_ms": 1788820785755,
+        "t_start_ms": 1788823043601,
+        "t_end_ms": 1788823043601,
         "magnitude_sigma": 7.090628014484216,
         "incident": "fault-0003",
         "domain": "channel"
@@ -999,8 +999,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788820029253,
-        "t_end_ms": 1788820100428,
+        "t_start_ms": 1788822287099,
+        "t_end_ms": 1788822358274,
         "magnitude_sigma": 6.312257992471395,
         "incident": "fault-0022",
         "domain": "node"
@@ -1008,8 +1008,8 @@
       {
         "kind": "level_shift",
         "origin": "fault",
-        "t_start_ms": 1788820724461,
-        "t_end_ms": 1788820778292,
+        "t_start_ms": 1788822982307,
+        "t_end_ms": 1788823036138,
         "magnitude_sigma": -5.3870775964986475,
         "incident": "fault-0004",
         "domain": "channel"
@@ -1019,8 +1019,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788819942014,
-        "t_end_ms": 1788820001610,
+        "t_start_ms": 1788822199860,
+        "t_end_ms": 1788822259456,
         "magnitude_sigma": 5.020038524379288,
         "incident": "fault-0028",
         "domain": "rack"
@@ -1028,8 +1028,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788819980464,
-        "t_end_ms": 1788820035662,
+        "t_start_ms": 1788822238310,
+        "t_end_ms": 1788822293508,
         "magnitude_sigma": 6.632619003961075,
         "incident": "fault-0024",
         "domain": "node"
@@ -1037,8 +1037,8 @@
       {
         "kind": "level_shift",
         "origin": "fault",
-        "t_start_ms": 1788820114216,
-        "t_end_ms": 1788820183616,
+        "t_start_ms": 1788822372062,
+        "t_end_ms": 1788822441462,
         "magnitude_sigma": -6.921066245054038,
         "incident": "fault-0005",
         "domain": "node"
@@ -1048,8 +1048,8 @@
       {
         "kind": "spike",
         "origin": "fault",
-        "t_start_ms": 1788820002059,
-        "t_end_ms": 1788820002059,
+        "t_start_ms": 1788822259905,
+        "t_end_ms": 1788822259905,
         "magnitude_sigma": 6.712803707258958,
         "incident": "fault-0029",
         "domain": "node"
@@ -1057,8 +1057,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788820115086,
-        "t_end_ms": 1788820192189,
+        "t_start_ms": 1788822372932,
+        "t_end_ms": 1788822450035,
         "magnitude_sigma": 7.0476009524309795,
         "incident": "fault-0005",
         "domain": "node"
@@ -1066,8 +1066,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788820444242,
-        "t_end_ms": 1788820496310,
+        "t_start_ms": 1788822702088,
+        "t_end_ms": 1788822754156,
         "magnitude_sigma": 4.225548826485954,
         "incident": "fault-0025",
         "domain": "channel"
@@ -1075,8 +1075,8 @@
       {
         "kind": "spike",
         "origin": "fault",
-        "t_start_ms": 1788820642089,
-        "t_end_ms": 1788820642089,
+        "t_start_ms": 1788822899935,
+        "t_end_ms": 1788822899935,
         "magnitude_sigma": -4.132868955986914,
         "incident": "fault-0006",
         "domain": "channel"
@@ -1086,8 +1086,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788819940925,
-        "t_end_ms": 1788820014622,
+        "t_start_ms": 1788822198771,
+        "t_end_ms": 1788822272468,
         "magnitude_sigma": -5.534231120766154,
         "incident": "fault-0028",
         "domain": "rack"
@@ -1095,8 +1095,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788819981478,
-        "t_end_ms": 1788820054103,
+        "t_start_ms": 1788822239324,
+        "t_end_ms": 1788822311949,
         "magnitude_sigma": -6.3975601387960666,
         "incident": "fault-0024",
         "domain": "node"
@@ -1104,8 +1104,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788820001828,
-        "t_end_ms": 1788820027961,
+        "t_start_ms": 1788822259674,
+        "t_end_ms": 1788822285807,
         "magnitude_sigma": 6.531787441250922,
         "incident": "fault-0029",
         "domain": "node"
@@ -1113,8 +1113,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788820113970,
-        "t_end_ms": 1788820160091,
+        "t_start_ms": 1788822371816,
+        "t_end_ms": 1788822417937,
         "magnitude_sigma": 4.4237447821803375,
         "incident": "fault-0005",
         "domain": "node"
@@ -1124,8 +1124,8 @@
       {
         "kind": "level_shift",
         "origin": "fault",
-        "t_start_ms": 1788819992540,
-        "t_end_ms": 1788820014673,
+        "t_start_ms": 1788822250386,
+        "t_end_ms": 1788822272519,
         "magnitude_sigma": 4.7224974019238415,
         "incident": "fault-0020",
         "domain": "node"
@@ -1133,8 +1133,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788820703008,
-        "t_end_ms": 1788820783582,
+        "t_start_ms": 1788822960854,
+        "t_end_ms": 1788823041428,
         "magnitude_sigma": 4.724021633414777,
         "incident": "fault-0007",
         "domain": "node"
@@ -1144,8 +1144,8 @@
       {
         "kind": "spike",
         "origin": "fault",
-        "t_start_ms": 1788819942338,
-        "t_end_ms": 1788819942338,
+        "t_start_ms": 1788822200184,
+        "t_end_ms": 1788822200184,
         "magnitude_sigma": 7.450309818507072,
         "incident": "fault-0028",
         "domain": "rack"
@@ -1153,8 +1153,8 @@
       {
         "kind": "spike",
         "origin": "fault",
-        "t_start_ms": 1788819989565,
-        "t_end_ms": 1788819989565,
+        "t_start_ms": 1788822247411,
+        "t_end_ms": 1788822247411,
         "magnitude_sigma": 6.4608426527256935,
         "incident": "fault-0020",
         "domain": "node"
@@ -1162,8 +1162,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788820361562,
-        "t_end_ms": 1788820404473,
+        "t_start_ms": 1788822619408,
+        "t_end_ms": 1788822662319,
         "magnitude_sigma": 7.325701726445546,
         "incident": "fault-0013",
         "domain": "channel"
@@ -1171,8 +1171,8 @@
       {
         "kind": "level_shift",
         "origin": "fault",
-        "t_start_ms": 1788820701582,
-        "t_end_ms": 1788820736598,
+        "t_start_ms": 1788822959428,
+        "t_end_ms": 1788822994444,
         "magnitude_sigma": 5.560598526381595,
         "incident": "fault-0007",
         "domain": "node"
@@ -1182,8 +1182,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788819976942,
-        "t_end_ms": 1788820035264,
+        "t_start_ms": 1788822234788,
+        "t_end_ms": 1788822293110,
         "magnitude_sigma": -8.577802698048966,
         "incident": "fault-0030",
         "domain": "channel"
@@ -1191,8 +1191,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788819991944,
-        "t_end_ms": 1788820068247,
+        "t_start_ms": 1788822249790,
+        "t_end_ms": 1788822326093,
         "magnitude_sigma": 4.569688950889062,
         "incident": "fault-0020",
         "domain": "node"
@@ -1200,8 +1200,8 @@
       {
         "kind": "spike",
         "origin": "fault",
-        "t_start_ms": 1788820701474,
-        "t_end_ms": 1788820701474,
+        "t_start_ms": 1788822959320,
+        "t_end_ms": 1788822959320,
         "magnitude_sigma": 8.525890960949802,
         "incident": "fault-0007",
         "domain": "node"
@@ -1211,8 +1211,8 @@
       {
         "kind": "level_shift",
         "origin": "fault",
-        "t_start_ms": 1788819961219,
-        "t_end_ms": 1788820039391,
+        "t_start_ms": 1788822219065,
+        "t_end_ms": 1788822297237,
         "magnitude_sigma": -6.247322810254429,
         "incident": "fault-0021",
         "domain": "node"
@@ -1220,8 +1220,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788820562255,
-        "t_end_ms": 1788820631833,
+        "t_start_ms": 1788822820101,
+        "t_end_ms": 1788822889679,
         "magnitude_sigma": -7.067174852634163,
         "incident": "fault-0008",
         "domain": "node"
@@ -1231,8 +1231,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788820793340,
-        "t_end_ms": 1788820865471,
+        "t_start_ms": 1788823051186,
+        "t_end_ms": 1788823123317,
         "magnitude_sigma": -4.167369115128317,
         "incident": "fault-0010",
         "domain": "channel"
@@ -1242,8 +1242,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788820741977,
-        "t_end_ms": 1788820827511,
+        "t_start_ms": 1788822999823,
+        "t_end_ms": 1788823085357,
         "magnitude_sigma": 4.737447658689839,
         "incident": "fault-0011",
         "domain": "node"
@@ -1253,8 +1253,8 @@
       {
         "kind": "spike",
         "origin": "fault",
-        "t_start_ms": 1788820246548,
-        "t_end_ms": 1788820246548,
+        "t_start_ms": 1788822504394,
+        "t_end_ms": 1788822504394,
         "magnitude_sigma": 6.818665031627604,
         "incident": "fault-0015",
         "domain": "channel"
@@ -1262,8 +1262,8 @@
       {
         "kind": "spike",
         "origin": "fault",
-        "t_start_ms": 1788820433897,
-        "t_end_ms": 1788820433897,
+        "t_start_ms": 1788822691743,
+        "t_end_ms": 1788822691743,
         "magnitude_sigma": -5.43752171796358,
         "incident": "fault-0016",
         "domain": "channel"
@@ -1273,8 +1273,8 @@
       {
         "kind": "spike",
         "origin": "fault",
-        "t_start_ms": 1788820032061,
-        "t_end_ms": 1788820032061,
+        "t_start_ms": 1788822289907,
+        "t_end_ms": 1788822289907,
         "magnitude_sigma": -8.269420499319018,
         "incident": "fault-0022",
         "domain": "node"
@@ -1282,8 +1282,8 @@
       {
         "kind": "level_shift",
         "origin": "fault",
-        "t_start_ms": 1788820433356,
-        "t_end_ms": 1788820455855,
+        "t_start_ms": 1788822691202,
+        "t_end_ms": 1788822713701,
         "magnitude_sigma": 6.93508471714464,
         "incident": "fault-0017",
         "domain": "node"
@@ -1293,8 +1293,8 @@
       {
         "kind": "variance_burst",
         "origin": "fault",
-        "t_start_ms": 1788820367386,
-        "t_end_ms": 1788820448636,
+        "t_start_ms": 1788822625232,
+        "t_end_ms": 1788822706482,
         "magnitude_sigma": -6.231543382723574,
         "incident": "fault-0018",
         "domain": "channel"
@@ -1302,8 +1302,8 @@
       {
         "kind": "spike",
         "origin": "fault",
-        "t_start_ms": 1788820412574,
-        "t_end_ms": 1788820412574,
+        "t_start_ms": 1788822670420,
+        "t_end_ms": 1788822670420,
         "magnitude_sigma": -5.9607713042152275,
         "incident": "fault-0026",
         "domain": "node"
@@ -1313,8 +1313,8 @@
       {
         "kind": "spike",
         "origin": "fault",
-        "t_start_ms": 1788819989985,
-        "t_end_ms": 1788819989985,
+        "t_start_ms": 1788822247831,
+        "t_end_ms": 1788822247831,
         "magnitude_sigma": -7.753288169199601,
         "incident": "fault-0020",
         "domain": "node"
@@ -1324,8 +1324,8 @@
       {
         "kind": "spike",
         "origin": "fault",
-        "t_start_ms": 1788820459056,
-        "t_end_ms": 1788820459056,
+        "t_start_ms": 1788822716902,
+        "t_end_ms": 1788822716902,
         "magnitude_sigma": -4.539164300044642,
         "incident": "fault-0027",
         "domain": "node"
@@ -1335,8 +1335,8 @@
       {
         "kind": "spike",
         "origin": "fault",
-        "t_start_ms": 1788820461870,
-        "t_end_ms": 1788820461870,
+        "t_start_ms": 1788822719716,
+        "t_end_ms": 1788822719716,
         "magnitude_sigma": -8.434681205106388,
         "incident": "fault-0027",
         "domain": "node"
@@ -1346,8 +1346,8 @@
       {
         "kind": "spike",
         "origin": "fault",
-        "t_start_ms": 1788820001138,
-        "t_end_ms": 1788820001138,
+        "t_start_ms": 1788822258984,
+        "t_end_ms": 1788822258984,
         "magnitude_sigma": -6.872195808018408,
         "incident": "fault-0029",
         "domain": "node"

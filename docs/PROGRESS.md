@@ -164,6 +164,10 @@ ADRs live in `docs/DECISIONS.md`. Design-phase ADR-001..008 predate this build.
 | 032 | The CI quality gate measures structure, not judgement, and says which | 5 |
 | 033 | A chaos scenario must prove recovery happened, not just that health returned | 2 |
 | 034 | The explainer renders a picture, and writes nothing when it has no model | 4 |
+| 035 | The episode carries the time it began, not the boundary that noticed it | 3 |
+| 036 | The fine-tune's task is reshaped rather than dropped, with the teacher named as the ceiling | 5 |
+| 037 | A conditioning verdict waits behind an event-time barrier, and the evidence is recorded when it exists | 3 |
+| 038 | Attribution requires the shape of a blast radius, not only the timing of one | 3 |
 
 ---
 
@@ -172,9 +176,22 @@ ADRs live in `docs/DECISIONS.md`. Design-phase ADR-001..008 predate this build.
 **Waiting on the architect:** B-3 needs a **GPU run on the university cluster** -- the task is
 reshaped, the pipeline is built and dry-run verified, and the exact four-command run plus the
 hardware requirement are in `docs/BLOCKERS.md`. B-5 needs a decision on whether NFR-3 is
-restated or the window geometry changes. C-2 still needs a VLM key.
+restated or the window geometry changes. **B-6 is new and is the one that matters**: on the
+v4w run only 37 of 112 false pages overlap an injected excursion, so the 40% reduction target
+had a ceiling of 33% before the policy decided anything. Redefining the denominator, fixing
+the detector, or leaving NFR-8 as written is a judgement about what the number is for.
+C-2 still needs a VLM key.
 
-B-4 is closed: the record is fixed (ADR-035), v3 measured at +11.1% / -6.7%, NFR-8 missed for the fourth time and published as missed.
+**B-4 is answered by v4, and the answer is that the root cause was distributed-systems
+rather than statistical.** The corroboration test was deciding before its evidence arrived
+(G-7, ADR-037) and recording a verdict it had not reached (G-16). With both fixed, the
+timing criterion was tested on complete data for the first time and attributed real faults
+(+27.8% / -16.7%), because a seizing pump is synchronous inside its own scope. The
+blast-radius discriminator (ADR-038) then traded reduction for recall exactly as designed:
+on byte-identical records at 24 channels it halved the recall loss, 6.7% to 3.3%, for 4.4
+points of reduction. **NFR-8 missed for the fifth time -- +18.9% / -3.3% at 12 channels,
++3.6% / -3.3% at 24 -- with the recall half met for the first time.** Seven measurements are
+published side by side in `docs/EVALUATION.md` sections 3.4 to 3.11.
 
 **In flight:** nothing.
 

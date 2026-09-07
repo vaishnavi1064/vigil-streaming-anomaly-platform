@@ -105,7 +105,7 @@ silent NaNs come from.
 adapter's score, the per-symptom breakdown and the exact-match delta. If the delta is
 negative, that is the finding and it goes in `docs/EVALUATION.md` next to the rest.
 
-### B-4. Closed: the record is fixed, v3 measured, NFR-8 still not met.
+### B-4. Reopened and re-answered by v4. The root cause was distributed-systems, not statistical. NFR-8 still not met.
 
 **Closed 2026-09-07.** Option 2 was taken: the defect was fixed (ADR-035) and the run
 repeated. All four measurements are published side by side in `docs/EVALUATION.md`
@@ -117,6 +117,21 @@ sections 3.4-3.7.
 | v2 | synchrony, compared on window starts | +9.0% | -10.0% | missed |
 | low density | 20 deploys/hour | +6.7% | -6.7% | missed |
 | **v3** | synchrony, compared on **true onsets** | **+11.1%** | **-6.7%** | **missed** |
+| v4a | evidence made present, same criterion (ADR-037) | +27.8% | -16.7% | missed |
+| v4 | blast-radius discriminator, 12 ch (ADR-038) | +18.9% | **-3.3%** | missed |
+| v4w | blast-radius discriminator, 24 ch | +3.6% | **-3.3%** | missed |
+
+**What v4 answered (2026-09-07).** The root cause was a distributed-systems defect, not a
+statistical one, and fixing it did not rescue the target -- it changed which half fails.
+The corroboration test was deciding before its evidence arrived (G-7) and reporting a
+verdict it had not reached (G-16). With both fixed, in-scope siblings are present in 58 of
+69 scoped decisions, `isolated` fires 46 times where four runs reported zero, and the timing
+criterion -- finally tested on complete data -- attributes real faults, because a seizing
+pump is synchronous inside its own scope. The blast-radius discriminator then does what it
+claims: on byte-identical records at 24 channels it halved the recall loss, from 6.7% to
+3.3%, at a cost of 4.4 points of reduction. **The recall half of NFR-8 is met for the first
+time in five measurements; the reduction half is missed, and B-6 shows it was arithmetically
+unreachable on that run.** Full detail in `docs/EVALUATION.md` sections 3.8 to 3.11.
 
 **What the fix bought.** v3 against v2: +2.1 points of reduction and 3.3 points less recall
 loss, on the same seed and density with nothing else changed. Real and in the expected
@@ -127,6 +142,11 @@ implausible=69, isolated=0` over 76 episodes: the corroboration test never concl
 channel had moved alone, mostly because the siblings that would exonerate it had not closed
 yet when its turn came (G-7). Two of its seven attributions still cost a real fault, so the
 collateral alone (6.7%) exceeds the 5% tolerance before the 40% target is considered.
+
+**Superseded 2026-09-07 by v4.** The paragraph below said no fourth attempt was planned and
+named two candidates; the second of them, "a different discriminator altogether", is what v4
+built. Kept as written -- the reasoning was sound on the evidence then available, and one of
+its premises turned out to be false.
 
 **No fourth attempt is planned.** Reaching 40% with this policy would need a corroboration
 index over completed windows rather than closed episodes, or a different discriminator
@@ -160,6 +180,43 @@ lower bound.
 **Recommendation: 1.** Not taken autonomously because it edits a requirement rather than an
 implementation, and because the separately-reported windowing delay is a number the architect
 should choose to stand behind. Either way the measurement itself is the same work.
+
+**Note added by v4.** The verdict barrier (ADR-037) adds a configurable event-time delay --
+30 s by default -- between an episode closing and its conditioning verdict. Measured, it
+delayed only 1 of 144 verdicts past the moment the episode closed, because an episode does
+not close until its channel has been quiet for two window slides and the buffer has usually
+already elapsed by then. Whatever NFR-3 is restated to, that delay belongs in the statement.
+
+### B-6. The 40% false-positive target was unreachable on the v4w run before the policy decided anything. Redefine the denominator, or fix the detector?
+
+**What was found, and it should have been computed four runs ago.** NFR-8 asks for a >= 40%
+reduction in false pages. A conditioning policy can only remove a false page by attributing
+it to a context event, so it can only ever touch pages that overlap an injected artifact.
+On the v4w run, **75 of 112 false pages are `unexplained`**: they overlap no injected
+excursion at all, so nothing in the context topic could account for them however good the
+discriminator is. The ceiling is 37/112 = **33%**, achieved only by attributing every
+artifact page and never being wrong. At 12 channels the ceiling is 35/53 = 66%, and the
+measured +18.9% is 29% of it.
+
+**The options.**
+
+1. **Report the reduction against the attributable subset** -- false pages that overlap an
+   injected artifact -- and report the unexplained population separately as a detector
+   property. Defensible, and it measures the thing the policy actually controls. It also
+   makes the headline number larger, which is exactly why it must be argued for rather than
+   adopted: changing a denominator after four failures to hit it needs a reason that is not
+   "the old one was unflattering".
+2. **Reduce the unexplained pages at the detector.** They are z-score false positives on
+   AR(1) noise, so this is a detection problem: a higher threshold, or the foundation model,
+   or both. It leaves NFR-8 as written and attacks the real cause, and it changes the
+   shadow baseline every conditioning result is measured against.
+3. **Leave NFR-8 as written and keep reporting it as missed.** Honest, costs nothing, and
+   the +3.6% headline then describes the run's false-positive mix as much as the policy.
+
+**No recommendation offered.** This one changes what a requirement means after it has been
+missed five times, and the reason to prefer any option is a judgement about what the number
+is for. That is the architect's call, not the implementer's.
+
 
 ## Decided by the architect
 
