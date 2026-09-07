@@ -6,82 +6,127 @@
 
 ## Open -- needs a human
 
-### B-3. The tool-calling fine-tune would be distilling a five-way lookup. Is it still worth the rented GPU?
+### B-3. The fine-tune: task reshaped and pipeline built. **Needs a GPU run on your cluster.**
 
-**What was measured.** The training set is built and curated (1,200 examples, all four
-populations, every target gate-approved and licence-checked). Counting distinct target
-sequences over those 1,200 examples gives **five**:
+**Answered 2026-09-07 by reshaping the task (option 2), not by dropping it.** The original
+objection stands and is preserved below; what changed is the task, not the verdict on the old
+one.
 
-| Target | Rows | Produced when |
-|---|---|---|
-| describe, fetch_recent, silence_channel, raise_ticket | 351 | variance burst |
-| describe, fetch_recent, request_recalibration, raise_ticket | 307 | level shift |
-| describe, fetch_recent, annotate_episode | 309 | isolated spike |
-| describe_channel, escalate_to_human | 118 | safety channel |
-| escalate_to_human | 115 | abstention, and safety where escalate is the only licence |
+**The original finding (unchanged).** The first training set had five distinct target
+sequences over 1,200 examples, each a deterministic function of a symptom `Diagnoser` computes
+before the prompt is rendered and then puts in the prompt. A model trained on that learns a
+five-way classification whose answer is one of its own inputs; it can approach the
+deterministic planner and cannot beat it. `artifacts/planner-dataset/easy-reference.jsonl`
+keeps that set as the evidence.
 
-The target is a deterministic function of the diagnosed symptom, and the symptom is computed
-by `Diagnoser` **before** the prompt is rendered -- it is in the prompt. So a model trained
-on this set is learning a five-way classification whose answer is already an input. It can
-approach the deterministic planner and cannot beat it. B-2 was answered before this was
-measured.
+**What the task is now.** `src/vigil/tuning/hard.py`, ADR-036:
 
-**Options.**
+- The prompt carries the detector's **per-window evidence** and withholds the symptom, the
+  diagnosis summary and the licence list.
+- The five shapes are outside what `Diagnoser` can name. It has no fall-through, so they are
+  **misclassified rather than abstained on** -- an oscillating channel reads as a variance
+  burst and gets silenced while the control loop is unstable.
+- Retrieval returns the matching entry plus **two distractors**, so the entry has to be
+  chosen from the evidence before its licence can be read.
+- The held-out split states every licence **in prose**, on channels and metric vocabularies
+  the training split never contains, with sentence templates the training split never uses.
 
-1. **Drop the fine-tune; publish the measurement as the finding.** Keep the dataset builder,
-   the schema and the curation as evidence the work was done properly, and spend the time on
-   the agent eval (Ragas/DeepEval/TruLens) and the CI quality gate that Phase 5 also asks
-   for. Costs the "QLoRA" line; gains a defensible answer to "why didn't you fine-tune".
-2. **Make the task genuinely harder, then fine-tune.** Remove the diagnosis summary and
-   symptom from the prompt so the model must infer the symptom from the score evidence and
-   select actions from the retrieved licences. Still distillation, but the answer is no
-   longer handed to the model in its own prompt. Costs a rewrite of the prompt renderer and
-   a re-measure; the deterministic planner remains the baseline.
-3. **Fine-tune as planned and report it as distillation.** Cheapest in effort, and the
-   honest write-up would have to say the model cannot exceed the rules on this task.
+**The measured gap, on 300 held-out cases** (`python evaluate_planner.py`, raw result in
+`docs/results/planner-baseline.json`):
 
-**Recommendation: 1, or 2 if the fine-tune matters for the portfolio.** Not chosen
-autonomously because it trades an interview talking point against effort, which is the
-architect's call, and because it spends money on hardware.
+| Planner | Exact match | Forbidden action | Note |
+|---|---|---|---|
+| rules, **as deployed** | **0.0%** | 0.0% | cannot parse a prose licence, so it escalates on everything |
+| rules, **given licence sets** | **20.0%** | **61.3%** | generous: handed licences the live parser could not extract |
+| teacher policy | 100% by definition | 0% | the ceiling; a model can reach it and not exceed it |
 
-**Not blocking anything.** The deterministic planner is in place and the agent loop is
-complete; work continues elsewhere.
+Both baselines are reported because the first alone would flatter the fine-tune and the second
+alone would flatter the rules. Per symptom, the generous baseline is right on slow drift
+(60/60) and wrong on all four others (0/60 each) -- slow drift is in the set precisely because
+the rules handle it correctly, so a model that has learned to answer "not the rules" fails it.
 
-### B-4. Both conditioning measurements asked a coincidence question, not a synchrony question. Fix the episode record and measure a third time, or stop and publish the negative result?
+**What is built, and verified without a GPU.**
 
-**What was measured.** v2 ran on 2026-09-06 (run `753ddb71`): false-positive reduction
-**+9.0%** against a >= 40% target, recall loss **10.0%** against a <= 5% tolerance. NFR-8
-not met, for the second time and in the opposite direction from v1 -- v1 over-suppressed
-(39 attributions, -36.7% recall), v2 barely suppresses (6 attributions, +9.0% FP reduction).
+- `build_planner_dataset.py` -- writes `train.jsonl` (1,200) and `test.jsonl` (300) plus a
+  manifest, and exits non-zero if the splits share a channel.
+- `src/vigil/tuning/qlora.py` -- the configuration, quantisation and trainer assembly.
+- `train_planner.py` -- the training entry point, with `--dry-run`.
+- `evaluate_planner.py` -- scores any planner on the held-out split against both baselines.
+- 25 tests, including one that **fails if the deployed planner stops being wrong here**,
+  because that would remove the headroom and make the fine-tune pointless again.
 
-**Why it failed.** An episode's `t_start_ms` is the start of the *window* that first flagged
-it, and windows slide by 10 s. The only start gaps two episodes can have are 0, 10, 20 ...
-seconds, so v2's 5 s synchrony tolerance selected exactly one of them: zero. v2 measured
-"first flagged in the same window bucket", not "moved within 5 seconds". v1 measured the
-same coincidence at a 30 s bucket. **The synchrony hypothesis has not been tested.**
+`python train_planner.py --dry-run` passes on the reference laptop against the real
+Qwen2.5 tokenizer: prompts p50 **1,136** tokens, max **1,261**; completions p50 239, max 320;
+**0 examples over the 2,048-token limit**; 225 optimizer steps for 3 epochs at an effective
+batch of 16.
 
-Ground truth for the same run says the signal is there to be found: in-scope artifact onsets
-within one deploy have a median consecutive gap of **1.8 s**, and 70% of consecutive pairs
-are within 5 s -- all of it below the 10 s grid the episode record rounds to.
+**Nothing here has been trained.** No number in this repository comes from an adapter.
 
-**The fork.**
+### The exact run, for your cluster
 
-1. **Stop here and publish the negative result.** Two attempts, two honest failures, one
-   diagnosis each; `docs/EVALUATION.md` already carries all of it. This is what
-   `docs/PROGRESS.md` section 5 said to do if v2 missed, and it is a defensible place to
-   stop. The core mechanism that *did* work -- the plausibility check, 72 of 78 episodes
-   correctly raised rather than attributed -- stands on its own.
-2. **Fix the episode record, then measure v3.** Give `Episode` an onset time taken from the
-   sample that actually crossed the threshold rather than from the window boundary, then
-   re-run unchanged in every other respect. This is a defect fix rather than a policy tweak:
-   an episode that only knows which window noticed it is under-recording what it observed,
-   and the same field would sharpen detection-latency reporting and the dashboard. Cost:
-   a change to the episode schema and its store, plus one more 30-minute measurement.
+```bash
+# 1. environment (one GPU, see the requirement below)
+git clone <this repo> && cd vigil
+python -m venv .venv && . .venv/bin/activate
+pip install -e ".[train]"
 
-**Recommendation: 2, then publish v1, v2 and v3 together with this diagnosis.** Not taken
-autonomously because `docs/PROGRESS.md` section 5 explicitly said to stop after two attempts,
-and because a third attempt after two failures needs to be visibly a defect fix rather than a
-knob turn. If the answer is 1, nothing is lost: the diagnosis is already published.
+# 2. regenerate the dataset from the seed (deterministic; do not copy artifacts/ across)
+python build_planner_dataset.py
+python train_planner.py --dry-run          # must print DRY RUN PASSED before spending GPU time
+
+# 3. train
+python train_planner.py --base-model Qwen/Qwen2.5-7B-Instruct
+
+# 4. score the adapter against both baselines on the held-out split
+python evaluate_planner.py     --adapter artifacts/planner-qlora     --base-model Qwen/Qwen2.5-7B-Instruct     --report-json docs/results/planner-qlora.json
+```
+
+`evaluate_planner.py` exits 0 only if the adapter's exact-match beats the generous baseline,
+so the shell's exit status is the answer to B-3.
+
+**GPU requirement.**
+
+| | |
+|---|---|
+| Minimum | **16 GB** VRAM (T4 will not do it -- no bf16; use A10, L4, RTX 3090/4090, A5000 or better) |
+| Comfortable | **24 GB**, which is what the defaults are set for |
+| Base model | Qwen2.5-7B-Instruct, ~15 GB download, ~4.5 GB resident in NF4 |
+| Precision | bf16 compute, NF4 double-quantised weights, paged 8-bit AdamW |
+| Sequence length | 2,048 (measured maximum need: 1,261 + 320) |
+| Trainable parameters | LoRA r=32 on attention and MLP projections, roughly 0.5% of the model |
+| Estimated wall clock | **20-40 minutes** for 225 optimizer steps on a 24 GB card. An estimate from step count and typical throughput, **not a measurement** |
+| Disk | ~25 GB for the base model cache plus ~1 GB for adapters and checkpoints |
+
+If bf16 is unavailable, pass `--max-seq-length 1536` and expect fp16 instability on this task;
+the loss is dominated by a few confident tokens and fp16's narrower exponent range is where
+silent NaNs come from.
+
+**What to report back.** The output of step 4 is enough: it prints both baselines, the
+adapter's score, the per-symptom breakdown and the exact-match delta. If the delta is
+negative, that is the finding and it goes in `docs/EVALUATION.md` next to the rest.
+
+### B-4. Answered: the episode record is fixed and v3 is being measured.
+
+**Answered 2026-09-07 with option 2.** The defect is fixed (ADR-035): an episode now carries
+`onset_ms`, the event time of the reading that drove its score, and conditioning compares
+onsets rather than window boundaries.
+
+**Why the earlier measurements were invalid.** An episode was timestamped with the start of
+the window that flagged it, and windows slide by 10 s, so the only start differences two
+episodes could express were 0, 10, 20 ... seconds. A 5 s synchrony tolerance selects exactly
+one of them: identical bucket. v1 asked the same coincidence question at a 30 s bucket. The
+synchrony hypothesis was **untested rather than refuted**, and ground truth for the same run
+puts consecutive in-scope artifact onsets a median 1.8 s apart -- all of it below the grid.
+
+**That the fix resolves anything is measured, not assumed.** Over a 420-second synthetic
+scenario all 35 episodes now carry onsets strictly off the 10 s grid, spread from 0 to 27 s
+within their window. A regression test states the defect as a difference in verdict: three
+channels flagged in one window, two moving within a second and the third seventeen seconds
+later, corroborate on window starts and do not on onsets.
+
+**v3 is the same scenario, seed and density as v1, v2 and the low-density run**, with nothing
+changed but the timestamp resolution, and whatever it says goes into
+`docs/EVALUATION.md` section 3.6 beside the other three. v1 and v2 stay in the write-up.
 
 ### B-5. NFR-3 asks for event-to-flag in 2 s, which the window geometry makes impossible. Restate it or change the geometry?
 
