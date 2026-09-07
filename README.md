@@ -101,7 +101,7 @@ python -c "import base64,uuid;print(base64.urlsafe_b64encode(uuid.uuid4().bytes)
 
 docker compose up -d --wait   # Kafka in KRaft mode + Postgres, topics created explicitly
 
-python -m venv .venv && .venv/Scripts/pip install -e ".[dev,foundation]"
+python -m venv .venv && .venv/Scripts/pip install -e ".[dev,foundation,explain]"
 ```
 
 Nothing has a default. Compose refuses to start on an unset variable and the config loader
