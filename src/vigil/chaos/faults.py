@@ -330,9 +330,18 @@ class FlinkTaskManagerKill(Fault):
     Killing the TaskManager rather than cancelling the job is the point: a cancel is a
     graceful shutdown with a final checkpoint, which proves nothing about crash recovery.
 
-    Recovery is **the job returning to RUNNING with all vertices up**, not the container
-    restarting. A TaskManager that is alive but has not re-acquired its slots has not
-    recovered, and the job is still down.
+    Recovery is **the job redeployed after the kill and running again**, which is a stricter
+    thing than it sounds. Flink notices a dead TaskManager by heartbeat timeout, which
+    defaults to tens of seconds: for that whole window the JobManager still reports the job
+    RUNNING with every task running, because as far as it knows nothing has happened. A
+    check that only asks "is the job RUNNING with all tasks up" is therefore satisfied
+    immediately after the kill and measures nothing at all -- the first version of this
+    scenario reported 0.1s recovery for a job that did not actually redeploy for another
+    50 seconds.
+
+    So the vertex deployment timestamps are recorded at injection, and recovery requires
+    them to have *moved*. A job that never redeployed has not recovered, however healthy it
+    claims to be.
     """
 
     container: str = "vigil-flink-tm"
@@ -340,11 +349,47 @@ class FlinkTaskManagerKill(Fault):
 
     def __post_init__(self) -> None:
         self.name = "flink-taskmanager-kill"
-        self.description = "SIGKILL the Flink TaskManager, then wait for the job to restore"
+        self.description = "SIGKILL the Flink TaskManager, then wait for the job to redeploy"
+        self._deployed_before: float = 0.0
+
+    def _jobs(self) -> list[dict]:
+        import json
+        import urllib.request
+
+        with urllib.request.urlopen(f"{self.jobmanager_url}/jobs/overview", timeout=5) as r:
+            return json.loads(r.read()).get("jobs", [])
+
+    def _latest_deployment(self) -> float:
+        """The most recent vertex start time across running jobs, in epoch ms.
+
+        Read from the job detail rather than the job's own start-time, because a restart
+        redeploys the vertices while the job keeps its original start-time -- which is
+        exactly the field a naive check would compare and find unchanged.
+        """
+        import json
+        import urllib.request
+
+        latest = 0.0
+        for job in self._jobs():
+            try:
+                url = f"{self.jobmanager_url}/jobs/{job['jid']}"
+                with urllib.request.urlopen(url, timeout=5) as r:
+                    detail = json.loads(r.read())
+            except Exception:  # noqa: BLE001 - unreachable is handled by the caller
+                continue
+            for vertex in detail.get("vertices", []):
+                latest = max(latest, float(vertex.get("start-time") or 0))
+        return latest
 
     def inject(self) -> None:
         if not container_running(self.container):
             raise FaultError(f"{self.container} is not running; is the flink profile up?")
+        if not self._jobs():
+            raise FaultError(
+                "no job is running on the cluster; submit one first, or the kill proves "
+                "nothing about checkpoint recovery"
+            )
+        self._deployed_before = self._latest_deployment()
         docker("kill", "--signal=KILL", self.container)
 
     def heal(self) -> None:
@@ -355,11 +400,7 @@ class FlinkTaskManagerKill(Fault):
         if not container_running(self.container):
             return False
         try:
-            import json
-            import urllib.request
-
-            with urllib.request.urlopen(f"{self.jobmanager_url}/jobs/overview", timeout=5) as r:
-                jobs = json.loads(r.read()).get("jobs", [])
+            jobs = self._jobs()
         except Exception:  # noqa: BLE001 - unreachable means not yet recovered
             return False
         running = [j for j in jobs if j.get("state") == "RUNNING"]
@@ -368,10 +409,14 @@ class FlinkTaskManagerKill(Fault):
         # A job counts as recovered only once every task is running again. Flink reports the
         # job RUNNING while tasks are still being redeployed, and treating that as recovered
         # would time the container restart rather than the job's return to service.
-        return all(
+        if not all(
             j.get("tasks", {}).get("running", 0) == j.get("tasks", {}).get("total", -1)
             for j in running
-        )
+        ):
+            return False
+        # And the redeployment has to have actually happened. Before the heartbeat timeout
+        # fires, every check above passes on a job whose tasks are already dead.
+        return self._latest_deployment() > self._deployed_before
 
 
 ALL_FAULTS = {

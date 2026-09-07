@@ -231,3 +231,55 @@ def test_an_unreachable_jobmanager_is_reported_unhealthy_rather_than_raising():
         container="vigil-flink-nonexistent-xyz", jobmanager_url="http://127.0.0.1:1"
     )
     assert fault.healthy() is False
+
+
+# The defect this guards against: Flink notices a dead TaskManager by heartbeat timeout, so
+# for tens of seconds after the kill the JobManager still reports the job RUNNING with every
+# task running. The first version of the scenario accepted that and reported 0.1s recovery
+# for a job that did not redeploy for another 50 seconds.
+
+
+def running_job(tasks_running=4, total=4):
+    return [{"jid": "abc", "state": "RUNNING", "tasks": {"running": tasks_running, "total": total}}]
+
+
+def test_a_job_that_has_not_redeployed_since_the_kill_is_not_recovered(monkeypatch):
+    from vigil.chaos import faults as faults_module
+    from vigil.chaos.faults import FlinkTaskManagerKill
+
+    fault = FlinkTaskManagerKill()
+    fault._deployed_before = 1_000.0
+    monkeypatch.setattr(faults_module, "container_running", lambda _c: True)
+    monkeypatch.setattr(FlinkTaskManagerKill, "_jobs", lambda _self: running_job())
+    monkeypatch.setattr(FlinkTaskManagerKill, "_latest_deployment", lambda _self: 1_000.0)
+
+    assert fault.healthy() is False, "a stale RUNNING state is not recovery"
+
+    monkeypatch.setattr(FlinkTaskManagerKill, "_latest_deployment", lambda _self: 1_001.0)
+
+    assert fault.healthy() is True
+
+
+def test_a_job_with_tasks_still_deploying_is_not_recovered(monkeypatch):
+    from vigil.chaos import faults as faults_module
+    from vigil.chaos.faults import FlinkTaskManagerKill
+
+    fault = FlinkTaskManagerKill()
+    fault._deployed_before = 1_000.0
+    monkeypatch.setattr(faults_module, "container_running", lambda _c: True)
+    monkeypatch.setattr(FlinkTaskManagerKill, "_jobs", lambda _self: running_job(tasks_running=2))
+    monkeypatch.setattr(FlinkTaskManagerKill, "_latest_deployment", lambda _self: 2_000.0)
+
+    assert fault.healthy() is False
+
+
+def test_killing_a_taskmanager_with_no_job_on_it_proves_nothing_and_is_refused(monkeypatch):
+    from vigil.chaos import faults as faults_module
+    from vigil.chaos.faults import FlinkTaskManagerKill
+
+    fault = FlinkTaskManagerKill()
+    monkeypatch.setattr(faults_module, "container_running", lambda _c: True)
+    monkeypatch.setattr(FlinkTaskManagerKill, "_jobs", lambda _self: [])
+
+    with pytest.raises(FaultError, match="no job"):
+        fault.inject()
