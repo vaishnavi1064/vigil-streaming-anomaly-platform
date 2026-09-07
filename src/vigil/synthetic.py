@@ -64,6 +64,13 @@ class InjectedEpisode:
     end_s: float
     magnitude: float  # in units of the channel's noise sigma
     origin: AnomalyOrigin = AnomalyOrigin.FAULT
+    # Which real-world event this excursion belongs to, and the topology domain that event
+    # occupies -- one machine, one cabinet, one deploy ring, or a single sensor. A pump
+    # seizing moves four channels and is one incident; counting it as four would let a
+    # multi-channel fault inflate both the recall denominator and any apparent loss in it.
+    # Ground truth only: no detector or policy reads either field.
+    incident: str = ""
+    domain: str = ""
 
     def covers(self, t_s: float) -> bool:
         return self.start_s <= t_s <= self.end_s

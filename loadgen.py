@@ -77,6 +77,12 @@ def run(args: argparse.Namespace) -> int:
     )
     if source.plan is not None:
         print(f"{source.plan.summary()} -> markers to {context_topic!r}", flush=True)
+        print(f"topology: {source.plan.topology.summary()}", flush=True)
+        if args.write_topology:
+            # Written before a single reading is produced: the inventory is a fact about
+            # the fleet, not a result of the run, and the detector needs it from the start.
+            source.plan.topology.write(args.write_topology)
+            print(f"inventory written to {args.write_topology}", flush=True)
 
     try:
         with source:
@@ -159,11 +165,15 @@ def _write_plan(path: Path, source: SyntheticFleetSource) -> None:
                             "t_start_ms": anchor + int(e.start_s * 1000),
                             "t_end_ms": anchor + int(e.end_s * 1000),
                             "magnitude_sigma": e.magnitude,
+                            "incident": e.incident,
+                            "domain": e.domain,
                         }
                         for e in episodes
                     ]
                     for channel, episodes in d.artifacts.items()
                 },
+                "ring": d.ring,
+                "nodes": list(d.nodes),
             }
             for d in plan.deploys
         ],
@@ -175,14 +185,23 @@ def _write_plan(path: Path, source: SyntheticFleetSource) -> None:
                     "t_start_ms": anchor + int(e.start_s * 1000),
                     "t_end_ms": anchor + int(e.end_s * 1000),
                     "magnitude_sigma": e.magnitude,
+                    "incident": e.incident,
+                    "domain": e.domain,
                 }
                 for e in episodes
             ]
             for channel, episodes in plan.faults.items()
         },
+        # The inventory the excursions were placed on. Copied into the plan so a result can
+        # be re-scored years later without the separate file, and written separately for
+        # the detector, which must read the inventory and must never read the plan.
+        "topology": json.loads(plan.topology.to_json()),
         "populations": {
             "perturbing_deploys": len(plan.perturbing_deploys),
             "quiet_deploys": len(plan.quiet_deploys),
+            "canary_deploys": len(plan.canary_deploys),
+            "fault_incidents": len(plan.fault_incidents()),
+            "faults_by_domain": plan.faults_by_domain(),
             "faults_inside_deploy_windows": len(plan.faults_inside_deploy_windows()),
             "faults_outside_deploy_windows": len(plan.faults_outside_deploy_windows()),
         },
@@ -245,6 +264,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=None,
         help="write the ground-truth plan here for the evaluation harness",
+    )
+    scenario.add_argument(
+        "--write-topology",
+        type=Path,
+        default=None,
+        help="write the fleet inventory (channel -> node, rack, deploy ring) here. This is "
+        "operational fact, not ground truth: it carries nothing about what went wrong, and "
+        "it is what the detector is allowed to read",
     )
 
     p.add_argument("--topic", default=None, help="override READINGS_TOPIC")

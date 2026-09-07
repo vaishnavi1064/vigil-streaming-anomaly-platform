@@ -11,7 +11,7 @@ import pytest
 
 from vigil.context import ContextKind, Severity
 from vigil.scenario import build_scenario
-from vigil.synthetic import AnomalyOrigin, ChannelSimulator, ChannelSpec
+from vigil.synthetic import AnomalyOrigin, ChannelSimulator, ChannelSpec, default_fleet
 
 CHANNELS = tuple(f"ch-{i:02d}" for i in range(10))
 HOUR = 3600.0
@@ -240,6 +240,143 @@ def test_origin_is_omitted_from_the_wire_when_absent():
     from vigil.readings import Reading
 
     assert b"origin" not in Reading(channel="c", seq=1, event_ts_ms=1, value=0.0).to_json()
+
+
+# ------------------------- topology-aware placement (v4, ADR-038) -------------------------
+# Where an excursion lands is now as deliberate as when. These guard the populations the
+# blast-radius discriminator is scored against: if the generator stops producing node
+# faults inside deploy windows, or stops spreading deploys across machines, the topology
+# test becomes unfalsifiable in exactly the way ADR-015 exists to prevent.
+
+FLEET_24 = tuple(spec.name for spec in default_fleet(24))
+
+
+def topological_plan(channels=FLEET_24, **kw):
+    params = dict(seed=4242, deploys_per_hour=120.0, faults_per_hour=240.0)
+    params.update(kw)
+    return build_scenario(channels, HOUR, **params)
+
+
+def test_a_rollout_reaches_several_machines_not_a_random_handful_of_channels():
+    p = topological_plan()
+    spread = [len(d.nodes) for d in p.deploys if not d.canary]
+    assert spread, "every deploy was a single-machine canary"
+    assert min(spread) >= 2
+
+
+def test_a_rollout_stays_inside_one_deploy_ring():
+    p = topological_plan()
+    for deploy in p.deploys:
+        if not deploy.ring:
+            continue
+        assert set(p.topology.footprint(deploy.event.scope).rings) == {deploy.ring}
+
+
+def test_a_rollout_touches_the_same_metrics_on_each_machine_it_reaches():
+    # A redeploy of the vibration collector moves vibration everywhere it runs. A scope
+    # sampled channel-by-channel would have no recognisable shape at all.
+    p = topological_plan()
+    for deploy in p.deploys:
+        if len(deploy.nodes) < 2:
+            continue
+        per_node = {
+            node: {c.partition(".")[2] for c in deploy.event.scope if c.startswith(f"{node}.")}
+            for node in deploy.nodes
+        }
+        assert len({frozenset(v) for v in per_node.values()}) == 1
+
+
+def test_single_machine_canary_rollouts_are_a_real_population():
+    # They cannot be attributed by any topology test, so a generator that omitted them
+    # would be quietly removing the cases the discriminator loses on.
+    p = topological_plan()
+    assert p.canary_deploys
+
+
+def test_a_machine_fault_moves_several_metrics_on_one_machine():
+    p = topological_plan()
+    node_faults = [
+        members
+        for members in p.fault_incidents().values()
+        if members[0][1].domain == "node" and len(members) > 1
+    ]
+    assert node_faults
+    for members in node_faults:
+        nodes = {p.topology.node_of(channel) for channel, _ in members}
+        assert len(nodes) == 1
+
+
+def test_a_machine_faults_metrics_move_within_the_synchrony_tolerance_of_each_other():
+    # Deliberate. If a real fault were never synchronous, the timing test would already
+    # have worked and there would have been nothing to fix.
+    p = topological_plan()
+    for members in p.fault_incidents().values():
+        if len(members) < 2:
+            continue
+        onsets = [ep.start_s for _, ep in members]
+        assert max(onsets) - min(onsets) <= 5.0
+
+
+def test_a_cabinet_fault_moves_several_machines_inside_one_rack():
+    p = topological_plan()
+    rack_faults = [
+        members for members in p.fault_incidents().values() if members[0][1].domain == "rack"
+    ]
+    assert rack_faults, "the population that punishes a node-spread-only rule is missing"
+    for members in rack_faults:
+        racks = {p.topology.placement(channel).rack for channel, _ in members}
+        nodes = {p.topology.node_of(channel) for channel, _ in members}
+        assert len(racks) == 1
+        assert len(nodes) >= 2
+
+
+def test_single_sensor_faults_remain_a_real_population():
+    p = topological_plan()
+    assert any(m[0][1].domain == "channel" for m in p.fault_incidents().values())
+
+
+def test_a_fault_inside_a_deploy_window_lands_on_channels_the_deploy_touched():
+    """The trap the whole of v4 turns on.
+
+    A machine fault whose channels are all inside a deploy's scope, moving within seconds
+    of each other, is indistinguishable from a deploy artifact on timing and scope alone.
+    If the generator stopped producing these, the topology test would have nothing to beat.
+    """
+    p = topological_plan()
+    trapped = 0
+    for members in p.fault_incidents().values():
+        channels = {c for c, _ in members}
+        if len(channels) < 2:
+            continue
+        for deploy in p.deploys:
+            span = (deploy.event.t_start_ms / 1000.0, deploy.event.t_end_ms / 1000.0)
+            start = min(ep.start_s for _, ep in members)
+            if span[0] <= start <= span[1] and channels <= set(deploy.event.scope):
+                trapped += 1
+                break
+    assert trapped, "no multi-channel fault landed wholly inside a deploy's scope"
+
+
+def test_every_member_of_an_incident_shares_its_identifier_and_domain():
+    p = topological_plan()
+    for incident, members in p.fault_incidents().items():
+        assert {ep.incident for _, ep in members} == {incident}
+        assert len({ep.domain for _, ep in members}) == 1
+
+
+def test_an_incident_is_counted_once_however_many_channels_it_moved():
+    p = topological_plan()
+    channel_episodes = sum(len(v) for v in p.faults.values())
+    assert len(p.fault_incidents()) < channel_episodes
+    assert sum(p.faults_by_domain().values()) == len(p.fault_incidents())
+
+
+def test_a_fleet_with_no_structure_in_its_names_still_schedules_faults():
+    # ch-00 .. ch-09 are their own machines, so every fault is single-channel. The
+    # generator must degrade to that rather than failing to place anything.
+    p = topological_plan(CHANNELS)
+    assert p.fault_incidents()
+    assert set(p.faults_by_domain()) <= {"channel", "node", "rack"}
 
 
 def _grid(start: float, stop: float, step: float):

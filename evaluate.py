@@ -158,10 +158,12 @@ def main(argv: list[str] | None = None) -> int:
     bootstrap = args.bootstrap or kafka.bootstrap
     stamp = uuid.uuid4().hex[:8]
     plan_path = args.plan or Path(f"docs/results/paired-plan-{stamp}.json")
+    topology_path = args.topology or Path(f"docs/results/fleet-inventory-{stamp}.json")
 
     shadow_schema = f"vigil_shadow_{stamp}"
     conditioned_schema = f"vigil_cond_{stamp}"
     fail_open_schema = f"vigil_failopen_{stamp}"
+    timing_only_schema = f"vigil_timing_{stamp}"
 
     print(f"paired evaluation {stamp}: {args.duration:g}s at {args.rate:g} ev/s", flush=True)
     reset_topics(bootstrap, kafka)
@@ -188,6 +190,8 @@ def main(argv: list[str] | None = None) -> int:
             "60",
             "--write-plan",
             str(plan_path),
+            "--write-topology",
+            str(topology_path),
         ],
         timeout=args.duration + 300,
     )
@@ -221,6 +225,27 @@ def main(argv: list[str] | None = None) -> int:
         "--report-interval",
         "60",
     ]
+    # Everything the conditioned and ablation passes share. The topology arguments are kept
+    # apart so the ablation can drop exactly those and nothing else.
+    timing_args = [
+        "--conditioning",
+        "--min-corroborating-channels",
+        str(args.min_corroborating_channels),
+        "--min-scope-fraction",
+        str(args.min_scope_fraction),
+        "--synchrony-ms",
+        str(args.synchrony_ms),
+        "--verdict-buffer-ms",
+        str(args.verdict_buffer_ms),
+    ]
+    # The inventory, not the plan. The detector reads where a channel lives and never what
+    # was injected into it.
+    blast_radius_args = (
+        ["--topology", str(topology_path), "--min-blast-nodes", str(args.min_blast_nodes)]
+        if args.require_blast_radius
+        else ["--no-blast-radius"]
+    )
+    conditioning_args = [*timing_args, *blast_radius_args]
 
     # --- 3. shadow: the unconditioned baseline ---
     make_schema(postgres, shadow_schema)
@@ -235,23 +260,32 @@ def main(argv: list[str] | None = None) -> int:
     make_schema(postgres, conditioned_schema)
     conditioned_stdout = run_step(
         "conditioned pass (conditioning ON)",
-        [
-            *detector_args,
-            "--group",
-            f"vigil-eval-cond-{stamp}",
-            "--conditioning",
-            "--min-corroborating-channels",
-            str(args.min_corroborating_channels),
-            "--min-scope-fraction",
-            str(args.min_scope_fraction),
-            "--synchrony-ms",
-            str(args.synchrony_ms),
-            "--verdict-buffer-ms",
-            str(args.verdict_buffer_ms),
-        ],
+        [*detector_args, "--group", f"vigil-eval-cond-{stamp}", *conditioning_args],
         env={"PGOPTIONS": f"-c search_path={conditioned_schema}"},
         timeout=1800,
     )
+
+    # --- 4a. ablation: the same conditioning with the topology test switched off ---
+    # On byte-identical records, in the same run, so the difference between this pass and
+    # the conditioned one is the blast-radius test and nothing else. Run as a fourth pass
+    # rather than as a second invocation because two invocations regenerate the scenario
+    # against a different wall clock and the window boundaries move (docs/EVALUATION.md
+    # section 3.4), which would put a run-to-run difference inside an ablation.
+    timing_only_stdout = ""
+    if args.ablate_timing_only and args.require_blast_radius:
+        make_schema(postgres, timing_only_schema)
+        timing_only_stdout = run_step(
+            "ablation pass (conditioning ON, blast-radius test OFF)",
+            [
+                *detector_args,
+                "--group",
+                f"vigil-eval-timing-{stamp}",
+                *timing_args,
+                "--no-blast-radius",
+            ],
+            env={"PGOPTIONS": f"-c search_path={timing_only_schema}"},
+            timeout=1800,
+        )
 
     # --- 4b. fail-open: conditioning on, with nothing to condition on (ADR-007) ---
     fail_open: FailOpenCheck | None = None
@@ -263,17 +297,9 @@ def main(argv: list[str] | None = None) -> int:
                 *detector_args,
                 "--group",
                 f"vigil-eval-failopen-{stamp}",
-                "--conditioning",
                 "--context-topic",
                 f"{kafka.context_topic}.empty",
-                "--min-corroborating-channels",
-                str(args.min_corroborating_channels),
-                "--min-scope-fraction",
-                str(args.min_scope_fraction),
-                "--synchrony-ms",
-                str(args.synchrony_ms),
-                "--verdict-buffer-ms",
-                str(args.verdict_buffer_ms),
+                *conditioning_args,
             ],
             env={"PGOPTIONS": f"-c search_path={fail_open_schema}"},
             timeout=1800,
@@ -284,6 +310,9 @@ def main(argv: list[str] | None = None) -> int:
     shadow_episodes = read_episodes(postgres, shadow_schema)
     shadow = score_pass("shadow", shadow_episodes, truth)
     conditioned = score_pass("conditioned", read_episodes(postgres, conditioned_schema), truth)
+    timing_only = None
+    if timing_only_stdout:
+        timing_only = score_pass("timing only", read_episodes(postgres, timing_only_schema), truth)
     if args.verify_fail_open:
         fail_open = compare_fail_open(shadow_episodes, read_episodes(postgres, fail_open_schema))
     comparison = PairedComparison(
@@ -297,7 +326,8 @@ def main(argv: list[str] | None = None) -> int:
     print("PAIRED RESULT (ADR-016: never a single number)", flush=True)
     print(f"{'=' * 96}", flush=True)
     print(
-        f"ground truth: {len(truth.faults)} real faults "
+        f"ground truth: {len(truth.fault_incidents())} real fault incidents "
+        f"{truth.incidents_by_domain()} over {len(truth.faults)} channel-episodes "
         f"({len(truth.faults_inside_windows())} inside context windows, "
         f"{len(truth.faults_outside_windows())} outside, "
         f"{len(truth.faults_inside_quiet_windows())} inside quiet windows) | "
@@ -308,6 +338,37 @@ def main(argv: list[str] | None = None) -> int:
     print(comparison.table(), flush=True)
     print(flush=True)
     print(comparison.verdict(), flush=True)
+
+    ablation = None
+    if timing_only is not None:
+        ablation = PairedComparison(
+            shadow=shadow,
+            conditioned=timing_only,
+            fp_reduction_target=args.fp_target,
+            recall_loss_tolerance=args.recall_tolerance,
+        )
+        print(flush=True)
+        print("-" * 96, flush=True)
+        print(
+            "ABLATION: the same policy with the blast-radius test off, same records, same run",
+            flush=True,
+        )
+        print("-" * 96, flush=True)
+        print(
+            f"timing and scope only:  false-positive reduction {ablation.fp_reduction:+.1%} | "
+            f"recall loss {ablation.recall_loss:+.1%} | "
+            f"attributed {timing_only.attributed} of {timing_only.episodes}",
+            flush=True,
+        )
+        print(
+            f"with blast radius:      false-positive reduction {comparison.fp_reduction:+.1%} | "
+            f"recall loss {comparison.recall_loss:+.1%} | "
+            f"attributed {conditioned.attributed} of {conditioned.episodes}",
+            flush=True,
+        )
+        print(f"  by fault domain, timing only: {timing_only.domain_line()}", flush=True)
+        print(f"  by fault domain, blast radius: {conditioned.domain_line()}", flush=True)
+
     if fail_open is not None:
         print("")
         print(fail_open.line(), flush=True)
@@ -329,7 +390,10 @@ def main(argv: list[str] | None = None) -> int:
                         "min_scope_fraction": args.min_scope_fraction,
                         "synchrony_ms": args.synchrony_ms,
                         "verdict_buffer_ms": args.verdict_buffer_ms,
+                        "require_blast_radius": args.require_blast_radius,
+                        "min_blast_nodes": args.min_blast_nodes,
                     },
+                    "topology": str(topology_path),
                     "ground_truth": {
                         "faults": len(truth.faults),
                         "faults_inside_windows": len(truth.faults_inside_windows()),
@@ -337,6 +401,8 @@ def main(argv: list[str] | None = None) -> int:
                         "faults_inside_quiet_windows": len(truth.faults_inside_quiet_windows()),
                         "artifacts": len(truth.artifacts),
                         "windows": len(truth.windows),
+                        "fault_incidents": len(truth.fault_incidents()),
+                        "incidents_by_domain": truth.incidents_by_domain(),
                     },
                     "shadow": asdict(shadow),
                     "conditioned": asdict(conditioned),
@@ -346,6 +412,16 @@ def main(argv: list[str] | None = None) -> int:
                     "meets_target": comparison.meets_target,
                     "fail_open": asdict(fail_open) if fail_open else None,
                     "conditioning": conditioning_lines(conditioned_stdout),
+                    "ablation_timing_only": (
+                        {
+                            "pass": asdict(timing_only),
+                            "fp_reduction": ablation.fp_reduction,
+                            "recall_loss": ablation.recall_loss,
+                            "conditioning": conditioning_lines(timing_only_stdout),
+                        }
+                        if timing_only is not None and ablation is not None
+                        else None
+                    ),
                 },
                 indent=2,
             ),
@@ -357,6 +433,7 @@ def main(argv: list[str] | None = None) -> int:
         drop_schema(postgres, shadow_schema)
         drop_schema(postgres, conditioned_schema)
         drop_schema(postgres, fail_open_schema)
+        drop_schema(postgres, timing_only_schema)
 
     if fail_open is not None and not fail_open.held:
         return 2
@@ -387,7 +464,33 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument("--fp-target", type=float, default=0.40, help="NFR-8 half one")
     p.add_argument("--recall-tolerance", type=float, default=0.05, help="NFR-8 half two")
+    p.add_argument(
+        "--min-blast-nodes",
+        type=int,
+        default=2,
+        help="machines the perturbed channels must span before a rollout can explain them",
+    )
+    p.add_argument(
+        "--no-blast-radius",
+        dest="require_blast_radius",
+        action="store_false",
+        help="run the timing-only policy v1-v3 measured, with no topology test",
+    )
+    p.add_argument(
+        "--no-ablation",
+        dest="ablate_timing_only",
+        action="store_false",
+        help="skip the fourth pass that reruns the same policy without the topology test. "
+        "On by default: a discriminator reported without the version that lacks it is a "
+        "number with nothing to compare against",
+    )
     p.add_argument("--plan", type=Path, default=None)
+    p.add_argument(
+        "--topology",
+        type=Path,
+        default=None,
+        help="where the fleet inventory is written and read; defaults to a per-run path",
+    )
     p.add_argument("--report-json", type=Path, default=None)
     p.add_argument("--keep-schemas", action="store_true", help="leave the per-pass schemas behind")
     p.add_argument(

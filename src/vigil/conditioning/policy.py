@@ -43,6 +43,7 @@ from enum import StrEnum
 from vigil.conditioning.signals import ContextSignalSource, SignalWindow
 from vigil.context import ContextEvent, ContextKind, Severity
 from vigil.episodes import Episode, EpisodeStatus
+from vigil.topology import FleetTopology
 
 
 class Verdict(StrEnum):
@@ -55,6 +56,12 @@ class Verdict(StrEnum):
     IMPLAUSIBLE = "implausible"
     CORROBORATED = "corroborated"
     PIPELINE_DISTURBED = "pipeline_disturbed"
+    # The excursion is confined to one physical failure domain -- one machine, or one
+    # cabinet -- which is what a fault looks like and what a ring rollout does not.
+    FAULT_DOMAIN = "fault_domain"
+    # The deploy's own blast radius is confined to one failure domain, so its footprint and
+    # a fault's footprint are the same shape and nothing can tell them apart.
+    NARROW_BLAST_RADIUS = "narrow_blast_radius"
 
 
 @dataclass(frozen=True)
@@ -179,6 +186,17 @@ class ConditioningThresholds:
     # which it could have distorted a value, so it explains nothing.
     pipeline_requires_disturbance: bool = True
     pipeline_min_severity: Severity = Severity.WARNING
+    # Whether the blast-radius test runs at all. Off reproduces the timing-only policy that
+    # v1-v3 measured, which is the only way those results stay repeatable.
+    require_blast_radius: bool = True
+    # How many distinct machines the perturbed channels must span before the excursion can
+    # be a rollout rather than a machine failing. Two, because one is a fault domain; there
+    # is no fraction here on purpose -- a proportion would need a threshold, and "confined
+    # to one failure domain" is a fact about the graph rather than a matter of degree.
+    min_blast_nodes: int = 2
+    # Applied only where the fleet actually has more than one cabinet. A rack fault moves
+    # several machines at once and would pass the node test; it cannot pass this one.
+    require_rack_spread: bool = True
 
 
 @dataclass
@@ -188,6 +206,11 @@ class ConditioningPolicy:
     source: ContextSignalSource
     index: FlaggedWindowIndex = field(default_factory=FlaggedWindowIndex)
     thresholds: ConditioningThresholds = field(default_factory=ConditioningThresholds)
+    # The inventory: which machine and cabinet each channel is collected from, and which
+    # deploy ring reaches it. Operational fact from the CMDB, carrying nothing about what is
+    # wrong. Empty means no inventory, and then every blast-radius question answers "cannot
+    # tell" -- which raises the episode, like every other absence of evidence here.
+    topology: FleetTopology = field(default_factory=FleetTopology.empty)
 
     decided: int = field(default=0, init=False)
     attributed: int = field(default=0, init=False)
@@ -315,12 +338,17 @@ class ConditioningPolicy:
         enough_fraction = corroborating / scope_size >= self.thresholds.min_scope_fraction
 
         if enough_channels and enough_fraction:
+            perturbed = siblings | {episode.channel}
+            shape = self._blast_radius_verdict(event, perturbed)
+            if shape is not None:
+                return shape
             return self._attribute(
                 event,
                 (
                     f"{corroborating} of the {scope_size} channels {event.event_id} touched "
                     f"moved within {self.thresholds.synchrony_ms / 1000:g}s of each other, "
-                    f"which is what a change to all of them looks like"
+                    f"across {self._footprint_phrase(perturbed)}, which is the shape of the "
+                    f"rollout rather than of a machine failing"
                 ),
                 Verdict.CORROBORATED,
                 corroborating=corroborating,
@@ -347,6 +375,90 @@ class ConditioningPolicy:
             corroborating_channels=corroborating,
             scope_size=scope_size,
         )
+
+    def _footprint_phrase(self, channels: set[str]) -> str:
+        if not self.topology.known:
+            return f"{len(channels)} channels"
+        return self.topology.footprint(channels).describe()
+
+    def _blast_radius_verdict(self, event: ContextEvent, perturbed: set[str]) -> Attribution | None:
+        """Does the perturbation have the shape of this rollout, or of a failure domain?
+
+        Returns `None` when the topology raises no objection and the attribution may stand.
+        Otherwise returns the rejection, with the reason an operator needs.
+
+        Timing says these channels moved together. It cannot say *why*, because a machine
+        failing moves several of its own metrics within seconds too -- and when that machine
+        is inside a deploy's scope, a timing-only policy attributes a real fault to a deploy
+        and stops paging anyone. What separates the two is where the channels sit. A deploy
+        ring is laid out across physical failure domains deliberately, so that a cabinet
+        losing power and a rollout going bad do not look alike downstream; a fault is
+        confined to the thing that broke. So the test is structural: spread across domains
+        is a rollout, concentration in one is a fault.
+
+        Two ways it declines, and both raise the episode:
+
+        - the **observed** perturbation is confined to one machine or one cabinet, which is
+          a fault however well-timed it was;
+        - the **declared** blast radius is itself confined to one machine, so the rollout
+          and a fault would leave the same footprint and no evidence could separate them
+          (the same reasoning as ADR-025, applied to shape rather than to count).
+        """
+        if not self.thresholds.require_blast_radius or not self.topology.known:
+            return None
+
+        observed = self.topology.footprint(perturbed)
+        declared = self.topology.footprint(event.scope) if event.scope else observed
+        if observed.unplaced:
+            # A channel the inventory does not know about. Absence of evidence, so the
+            # topology declines to object rather than guessing where it lives.
+            return None
+
+        if declared.node_count < self.thresholds.min_blast_nodes:
+            return Attribution(
+                status=EpisodeStatus.REAL,
+                verdict=Verdict.NARROW_BLAST_RADIUS,
+                attributed_to=None,
+                reason=(
+                    f"{event.event_id} reached only {declared.nodes[0] if declared.nodes else '?'}"
+                    f", so its blast radius is one machine -- the same footprint a fault on "
+                    f"that machine would leave, and nothing can tell the two apart"
+                ),
+                scope_size=len(event.scope),
+            )
+
+        if observed.node_count < self.thresholds.min_blast_nodes:
+            return Attribution(
+                status=EpisodeStatus.REAL,
+                verdict=Verdict.FAULT_DOMAIN,
+                attributed_to=None,
+                reason=(
+                    f"every channel that moved sits on {observed.nodes[0]}, while "
+                    f"{event.event_id} reached {declared.node_count} machines; one machine "
+                    f"moving is that machine failing, not the rollout arriving"
+                ),
+                scope_size=len(event.scope),
+            )
+
+        if (
+            self.thresholds.require_rack_spread
+            and self.topology.distinguishes_racks
+            and observed.confined_to_one_rack
+            and not declared.confined_to_one_rack
+        ):
+            return Attribution(
+                status=EpisodeStatus.REAL,
+                verdict=Verdict.FAULT_DOMAIN,
+                attributed_to=None,
+                reason=(
+                    f"the {observed.node_count} machines that moved are all in "
+                    f"{observed.racks[0]}, while {event.event_id} reached "
+                    f"{declared.rack_count} racks; a rollout does not stop at a cabinet "
+                    f"boundary and a cabinet losing power does"
+                ),
+                scope_size=len(event.scope),
+            )
+        return None
 
     def _attribute(
         self,

@@ -27,13 +27,18 @@ from vigil.episodes import EpisodeStatus
 
 @dataclass(frozen=True)
 class TruthEpisode:
-    """One injected episode from the plan."""
+    """One injected episode from the plan, on one channel."""
 
     channel: str
     kind: str
     origin: str
     t_start_ms: int
     t_end_ms: int
+    # Which real-world event this belongs to, and the topology domain that event occupies.
+    # A pump seizing moves several of its metrics and is one incident; older plans have no
+    # incident field and each episode is then its own, which is what they were.
+    incident: str = ""
+    domain: str = ""
 
     @property
     def is_real(self) -> bool:
@@ -41,6 +46,38 @@ class TruthEpisode:
 
     def overlaps(self, start_ms: int, end_ms: int, slack_ms: int = 0) -> bool:
         return self.t_start_ms - slack_ms <= end_ms and start_ms <= self.t_end_ms + slack_ms
+
+
+@dataclass(frozen=True)
+class FaultIncident:
+    """One real fault, as the set of channels it moved.
+
+    The `domain` says which level of the topology it occupies -- one machine, one cabinet,
+    or a single sensor -- so recall can be broken out by fault shape. A discriminator built
+    on blast radius has to be scored against the shapes it claims to separate, or the claim
+    is untested.
+    """
+
+    incident: str
+    domain: str
+    episodes: tuple[TruthEpisode, ...]
+    window: TruthWindow | None
+
+    @property
+    def channels(self) -> tuple[str, ...]:
+        return tuple(sorted({e.channel for e in self.episodes}))
+
+    @property
+    def t_start_ms(self) -> int:
+        return min(e.t_start_ms for e in self.episodes)
+
+    @property
+    def inside_window(self) -> bool:
+        return self.window is not None
+
+    @property
+    def inside_quiet_window(self) -> bool:
+        return self.window is not None and not self.window.perturbed
 
 
 @dataclass(frozen=True)
@@ -74,7 +111,15 @@ class GroundTruth:
         for channel, episodes in data.get("faults", {}).items():
             for e in episodes:
                 truth.faults.append(
-                    TruthEpisode(channel, e["kind"], e["origin"], e["t_start_ms"], e["t_end_ms"])
+                    TruthEpisode(
+                        channel,
+                        e["kind"],
+                        e["origin"],
+                        e["t_start_ms"],
+                        e["t_end_ms"],
+                        incident=e.get("incident") or f"{channel}@{e['t_start_ms']}",
+                        domain=e.get("domain") or "channel",
+                    )
                 )
         for deploy in data.get("deploys", []):
             event = deploy["event"]
@@ -91,7 +136,13 @@ class GroundTruth:
                 for e in episodes:
                     truth.artifacts.append(
                         TruthEpisode(
-                            channel, e["kind"], e["origin"], e["t_start_ms"], e["t_end_ms"]
+                            channel,
+                            e["kind"],
+                            e["origin"],
+                            e["t_start_ms"],
+                            e["t_end_ms"],
+                            incident=e.get("incident") or event["event_id"],
+                            domain=e.get("domain") or "ring",
                         )
                     )
         return truth
@@ -115,6 +166,46 @@ class GroundTruth:
             if window.covers(episode.channel, episode.t_start_ms, episode.t_end_ms):
                 return window
         return None
+
+    # -- incidents: the unit an operator is actually paged for --
+
+    def fault_incidents(self) -> list[FaultIncident]:
+        """Faults grouped by the thing that happened, not by the channel that showed it.
+
+        A pump seizing moves several of its own metrics. Counting that as four faults would
+        quadruple its weight in recall against a single-sensor fault next to it, and would
+        make the recall denominator a function of how many metrics each machine happens to
+        report. ADR-016 already fixed the unit of counting as the incident; this extends the
+        same rule from the observed side to the truth side.
+
+        In every plan written before topology-aware faults existed each episode is its own
+        incident, so this is a strict generalisation rather than a redefinition.
+        """
+        grouped: dict[str, list[TruthEpisode]] = {}
+        for fault in self.faults:
+            grouped.setdefault(fault.incident or f"{fault.channel}@{fault.t_start_ms}", []).append(
+                fault
+            )
+        out = []
+        for incident_id, members in grouped.items():
+            windows = [self._covering(m) for m in members]
+            covering = next((w for w in windows if w is not None), None)
+            out.append(
+                FaultIncident(
+                    incident=incident_id,
+                    domain=members[0].domain or "channel",
+                    episodes=tuple(sorted(members, key=lambda m: m.t_start_ms)),
+                    window=covering,
+                )
+            )
+        out.sort(key=lambda i: i.t_start_ms)
+        return out
+
+    def incidents_by_domain(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for incident in self.fault_incidents():
+            counts[incident.domain] = counts.get(incident.domain, 0) + 1
+        return dict(sorted(counts.items()))
 
 
 @dataclass(frozen=True)
@@ -144,6 +235,7 @@ class PairedResult:
     paged: int
     attributed: int
 
+    # Counted per incident: the thing that happened, not the channels that showed it.
     faults_total: int
     faults_detected: int
     faults_inside_total: int
@@ -155,6 +247,15 @@ class PairedResult:
 
     artifact_pages: int
     unexplained_pages: int
+
+    # Recall broken out by the shape of the fault, which is what a blast-radius
+    # discriminator has to be scored against. Keys are topology domains.
+    faults_by_domain: dict[str, tuple[int, int]] = field(default_factory=dict)
+    # The finer view, one entry per channel-episode. Reported beside the incident numbers
+    # rather than instead of them: a policy that loses one metric of a four-metric fault has
+    # done something different from one that loses the whole fault, and only this shows it.
+    fault_channels_total: int = 0
+    fault_channels_detected: int = 0
 
     @property
     def recall(self) -> float:
@@ -193,6 +294,22 @@ class PairedResult:
     def precision(self) -> float:
         return (self.paged - self.false_pages) / self.paged if self.paged else 0.0
 
+    @property
+    def recall_channels(self) -> float:
+        return (
+            self.fault_channels_detected / self.fault_channels_total
+            if self.fault_channels_total
+            else 0.0
+        )
+
+    def domain_line(self) -> str:
+        if not self.faults_by_domain:
+            return "no faults"
+        return " | ".join(
+            f"{domain} {found}/{total}"
+            for domain, (found, total) in sorted(self.faults_by_domain.items())
+        )
+
 
 def score_pass(
     label: str,
@@ -213,9 +330,20 @@ def score_pass(
             for o in paged
         )
 
-    inside = truth.faults_inside_windows()
-    outside = truth.faults_outside_windows()
-    quiet = truth.faults_inside_quiet_windows()
+    def incident_detected(incident: FaultIncident) -> bool:
+        # One page is enough. An operator woken for the bearing temperature of a seizing
+        # pump has been told about the pump.
+        return any(detected(e) for e in incident.episodes)
+
+    incidents = truth.fault_incidents()
+    inside = [i for i in incidents if i.inside_window]
+    outside = [i for i in incidents if not i.inside_window]
+    quiet = [i for i in incidents if i.inside_quiet_window]
+
+    by_domain: dict[str, tuple[int, int]] = {}
+    for incident in incidents:
+        found, total = by_domain.get(incident.domain, (0, 0))
+        by_domain[incident.domain] = (found + int(incident_detected(incident)), total + 1)
 
     artifact_pages = 0
     unexplained_pages = 0
@@ -236,16 +364,19 @@ def score_pass(
         episodes=len(observed),
         paged=len(paged),
         attributed=len(observed) - len(paged),
-        faults_total=len(truth.faults),
-        faults_detected=sum(1 for f in truth.faults if detected(f)),
+        faults_total=len(incidents),
+        faults_detected=sum(1 for i in incidents if incident_detected(i)),
         faults_inside_total=len(inside),
-        faults_inside_detected=sum(1 for f in inside if detected(f)),
+        faults_inside_detected=sum(1 for i in inside if incident_detected(i)),
         faults_outside_total=len(outside),
-        faults_outside_detected=sum(1 for f in outside if detected(f)),
+        faults_outside_detected=sum(1 for i in outside if incident_detected(i)),
         faults_quiet_window_total=len(quiet),
-        faults_quiet_window_detected=sum(1 for f in quiet if detected(f)),
+        faults_quiet_window_detected=sum(1 for i in quiet if incident_detected(i)),
         artifact_pages=artifact_pages,
         unexplained_pages=unexplained_pages,
+        faults_by_domain=by_domain,
+        fault_channels_total=len(truth.faults),
+        fault_channels_detected=sum(1 for f in truth.faults if detected(f)),
     )
 
 
@@ -326,6 +457,12 @@ class PairedComparison:
                 f"{c.recall_quiet_window - s.recall_quiet_window:+.1%}",
             ),
             (
+                "Recall, per fault channel-episode",
+                f"{s.recall_channels:.1%} ({s.fault_channels_detected}/{s.fault_channels_total})",
+                f"{c.recall_channels:.1%} ({c.fault_channels_detected}/{c.fault_channels_total})",
+                f"{c.recall_channels - s.recall_channels:+.1%}",
+            ),
+            (
                 "Precision (incident-level)",
                 f"{s.precision:.1%}",
                 f"{c.precision:.1%}",
@@ -337,6 +474,11 @@ class PairedComparison:
         lines.append("-" * (width + 60))
         for name, a, b, delta in rows:
             lines.append(f"{name.ljust(width)}  {a:>22}  {b:>22}  {delta:>9}")
+        if s.faults_by_domain:
+            lines.append("")
+            lines.append("Recall by fault domain -- the shapes a blast-radius test separates")
+            lines.append(f"  shadow      {s.domain_line()}")
+            lines.append(f"  conditioned {c.domain_line()}")
         return "\n".join(lines)
 
     def verdict(self) -> str:

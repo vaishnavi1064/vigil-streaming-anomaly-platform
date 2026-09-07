@@ -1,0 +1,75 @@
+{
+  "run": "926aaf75",
+  "plan": "docs\\results\\paired-plan-926aaf75.json",
+  "config": {
+    "duration_s": 900.0,
+    "rate": 400.0,
+    "channels": 12,
+    "seed": 20260906,
+    "threshold": 8.0,
+    "min_corroborating_channels": 2,
+    "min_scope_fraction": 0.25,
+    "synchrony_ms": 5000,
+    "verdict_buffer_ms": 30000
+  },
+  "ground_truth": {
+    "faults": 30,
+    "faults_inside_windows": 13,
+    "faults_outside_windows": 17,
+    "faults_inside_quiet_windows": 3,
+    "artifacts": 56,
+    "windows": 14
+  },
+  "shadow": {
+    "label": "shadow",
+    "episodes": 86,
+    "paged": 86,
+    "attributed": 0,
+    "faults_total": 30,
+    "faults_detected": 25,
+    "faults_inside_total": 13,
+    "faults_inside_detected": 13,
+    "faults_outside_total": 17,
+    "faults_outside_detected": 12,
+    "faults_quiet_window_total": 3,
+    "faults_quiet_window_detected": 3,
+    "artifact_pages": 46,
+    "unexplained_pages": 26
+  },
+  "conditioned": {
+    "label": "conditioned",
+    "episodes": 86,
+    "paged": 65,
+    "attributed": 21,
+    "faults_total": 30,
+    "faults_detected": 20,
+    "faults_inside_total": 13,
+    "faults_inside_detected": 9,
+    "faults_outside_total": 17,
+    "faults_outside_detected": 11,
+    "faults_quiet_window_total": 3,
+    "faults_quiet_window_detected": 3,
+    "artifact_pages": 26,
+    "unexplained_pages": 26
+  },
+  "fp_reduction": 0.2777777777777778,
+  "recall_loss": 0.16666666666666674,
+  "recall_loss_inside": 0.3076923076923077,
+  "meets_target": false,
+  "fail_open": {
+    "shadow_episodes": 86,
+    "fail_open_episodes": 86,
+    "identical": 86,
+    "missing_from_fail_open": 0,
+    "extra_in_fail_open": 0,
+    "suppressed": 0,
+    "attributed": 0
+  },
+  "conditioning": [
+    "conditioning: on, reading 'ops.context', verdicts held 30s of event time behind the fleet watermark",
+    "conditioning: decided 86 | attributed 21 | raised 65 | corroborated=21, implausible=65",
+    "corroboration evidence over 83 scoped decisions: in-scope siblings synchronous mean 0.65 (33 decisions with >=1) | present anywhere in the episode span mean 2.47 (56 decisions with >=1)",
+    "verdict barrier: buffer 30s | held 86 | released on watermark 84 | on flush 2 | delayed past episode close 2 of 84, event-time p50 0.0s p95 0.0s max 66.4s",
+    "context events seen 45 (malformed 0)"
+  ]
+}

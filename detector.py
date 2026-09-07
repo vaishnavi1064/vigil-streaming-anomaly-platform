@@ -44,6 +44,7 @@ from vigil.explain import ExplanationRequest, ExplanationWorker, VlmExplainer
 from vigil.readings import Reading
 from vigil.settings import KafkaSettings, PostgresSettings, VlmSettings
 from vigil.store import EpisodeStore
+from vigil.topology import FleetTopology
 from vigil.windows import SlidingWindowAssigner
 
 log = logging.getLogger("vigil.detector")
@@ -438,13 +439,25 @@ def run(args: argparse.Namespace) -> int:
             bootstrap, args.context_topic or kafka.context_topic, group=f"{args.group}-context"
         )
         context_source.start()
+        topology = FleetTopology.empty()
+        if args.topology:
+            topology = FleetTopology.load(args.topology)
+            log.info("fleet inventory loaded: %s", topology.summary())
+        elif args.require_blast_radius:
+            log.warning(
+                "no --topology given, so the blast-radius test cannot run and conditioning "
+                "falls back to timing and scope alone"
+            )
         conditioning = ConditioningPolicy(
             source=context_source,
             index=FlaggedWindowIndex(synchrony_ms=args.synchrony_ms),
+            topology=topology,
             thresholds=ConditioningThresholds(
                 min_corroborating_channels=args.min_corroborating_channels,
                 min_scope_fraction=args.min_scope_fraction,
                 synchrony_ms=args.synchrony_ms,
+                require_blast_radius=args.require_blast_radius,
+                min_blast_nodes=args.min_blast_nodes,
             ),
         )
 
@@ -741,6 +754,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="event-time delay between an episode closing and its verdict, so every "
         "in-scope sibling that could exonerate it has closed first (G-7). Costs detection "
         "latency and buys evidence; 0 restores the racing behaviour v1-v3 measured",
+    )
+    c.add_argument(
+        "--topology",
+        default=None,
+        help="fleet inventory: channel -> node, rack, deploy ring. Operational fact from "
+        "the CMDB, never ground truth about anomalies. Without it the blast-radius test "
+        "cannot run and conditioning falls back to timing and scope",
+    )
+    c.add_argument(
+        "--no-blast-radius",
+        dest="require_blast_radius",
+        action="store_false",
+        help="skip the topology test, leaving the timing-only policy v1-v3 measured. The "
+        "only way those results stay reproducible",
+    )
+    c.add_argument(
+        "--min-blast-nodes",
+        type=int,
+        default=2,
+        help="how many machines the channels that moved must span before a rollout can "
+        "explain them. Below 2 the excursion is confined to one failure domain, which is "
+        "what a machine failing looks like",
     )
     c.add_argument(
         "--watermark-idle-ms",
