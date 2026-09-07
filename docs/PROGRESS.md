@@ -157,8 +157,8 @@ ADRs live in `docs/DECISIONS.md`. Design-phase ADR-001..008 predate this build.
 | 030 | An agent that can propose nothing escalates instead of falling silent | 4 |
 | 031 | The training set's abstention population is constructed, and says so | 5 |
 | 032 | The CI quality gate measures structure, not judgement, and says which | 5 |
-| 034 | The explainer renders a picture, and writes nothing when it has no model | 4 |
 | 033 | A chaos scenario must prove recovery happened, not just that health returned | 2 |
+| 034 | The explainer renders a picture, and writes nothing when it has no model | 4 |
 
 ---
 
