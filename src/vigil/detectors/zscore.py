@@ -97,10 +97,12 @@ class RollingZScoreDetector(WindowDetector):
         decay: float = 0.995,
         warmup_samples: int = 120,
         floor_sigma: float = 1e-9,
+        onset_sigma: float = 3.0,
     ) -> None:
         self.decay = decay
         self.warmup_samples = warmup_samples
         self.floor_sigma = floor_sigma
+        self.onset_sigma = onset_sigma
         self._reference: dict[str, Welford] = {}
         self.windows_scored = 0
         self.windows_skipped_cold = 0
@@ -111,6 +113,30 @@ class RollingZScoreDetector(WindowDetector):
             ref = Welford(decay=self.decay)
             self._reference[channel] = ref
         return ref
+
+    def _onset(self, window: Window, reference_mean: float, sigma: float) -> int | None:
+        """Event time of the reading that drove this window's score.
+
+        The first sample to depart from the reference by `onset_sigma`, or -- if nothing
+        crosses that line, which happens when the score is dispersion-driven rather than
+        level-driven -- the single most extreme sample. Both answer "which reading is this
+        score about", which is the question the window boundary cannot answer.
+
+        `onset_sigma` is 3.0 because that is the conventional outlier boundary, not because
+        anything here was tuned to it: the value only decides which of two samples a few
+        hundred milliseconds apart is named, and the alternative branch covers the case
+        where no sample crosses at all.
+        """
+        if not window.values or not window.event_ts_ms:
+            return None
+        best_index, best_deviation = 0, -1.0
+        for index, value in enumerate(window.values):
+            deviation = abs(value - reference_mean) / sigma
+            if deviation >= self.onset_sigma:
+                return window.event_ts_ms[index]
+            if deviation > best_deviation:
+                best_index, best_deviation = index, deviation
+        return window.event_ts_ms[best_index]
 
     def score(self, window: Window) -> DetectorScore | None:
         started = time.perf_counter()
@@ -148,6 +174,7 @@ class RollingZScoreDetector(WindowDetector):
             window_end_ms=window.end_ms,
             score=score,
             latency_ms=(time.perf_counter() - started) * 1000.0,
+            onset_ms=self._onset(window, ref.mean, sigma),
             detail={
                 "mean_z": mean_z,
                 "dispersion_z": dispersion_z,

@@ -107,6 +107,15 @@ class FlaggedWindowIndex:
         self._starts: dict[str, list[int]] = {}
 
     def record(self, channel: str, t_start_ms: int, t_end_ms: int) -> None:
+        """Record when a channel was flagged.
+
+        `t_start_ms` should be the episode's **onset** (`Episode.began_ms`), not its window
+        start. Passing a window start still works and is what the loose criterion uses, but
+        it caps the resolution of every synchrony question at the window slide: with a 10 s
+        slide, two episodes are either in the same bucket or at least 10 s apart, so a
+        tolerance below the slide can only ever mean "identical bucket". That is what v1 and
+        v2 of the conditioning measurement actually asked (B-4).
+        """
         starts = self._starts.setdefault(channel, [])
         starts.append(t_start_ms)
         if len(starts) > 1 and starts[-1] < starts[-2]:
@@ -280,7 +289,9 @@ class ConditioningPolicy:
         discriminate at all.
         """
         scope = set(event.scope)
-        synchronous = self.index.synchronous_with(episode.t_start_ms, self.thresholds.synchrony_ms)
+        # Compared on the onset, not the window start: a tolerance finer than the window
+        # slide is meaningless against quantised boundaries (B-4).
+        synchronous = self.index.synchronous_with(episode.began_ms, self.thresholds.synchrony_ms)
         siblings = (synchronous & scope) if scope else synchronous
         siblings.discard(episode.channel)
         corroborating = len(siblings) + 1

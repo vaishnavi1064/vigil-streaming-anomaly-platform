@@ -57,9 +57,9 @@ class EpisodeStore:
                 INSERT INTO episodes (
                     channel, t_start_ms, t_end_ms, raised_by, peak_score, mean_score,
                     window_count, threshold, status, attributed_to, explanation,
-                    injected_origins
+                    injected_origins, onset_ms
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (channel, t_start_ms, raised_by) DO UPDATE SET
                     t_end_ms      = GREATEST(episodes.t_end_ms, EXCLUDED.t_end_ms),
                     peak_score    = GREATEST(episodes.peak_score, EXCLUDED.peak_score),
@@ -67,7 +67,8 @@ class EpisodeStore:
                     window_count  = GREATEST(episodes.window_count, EXCLUDED.window_count),
                     status        = EXCLUDED.status,
                     attributed_to = COALESCE(EXCLUDED.attributed_to, episodes.attributed_to),
-                    explanation   = COALESCE(EXCLUDED.explanation, episodes.explanation)
+                    explanation   = COALESCE(EXCLUDED.explanation, episodes.explanation),
+                    onset_ms      = COALESCE(episodes.onset_ms, EXCLUDED.onset_ms)
                 RETURNING id
                 """,
                 (
@@ -83,6 +84,7 @@ class EpisodeStore:
                     episode.attributed_to,
                     episode.explanation,
                     list(episode.injected_origins),
+                    episode.onset_ms,
                 ),
             )
             episode_id = cur.fetchone()["id"]

@@ -54,6 +54,10 @@ class ScoreSample:
     # re-deriving it from raw values it cannot see. Not persisted: it is per-window detail
     # for in-process reasoning, and storing it would put detector internals in the schema.
     detail: dict = field(default_factory=dict)
+    # Event time of the reading that drove the score. None when the detector cannot name one.
+    # Last in the field order deliberately: several call sites construct a ScoreSample
+    # positionally, and inserting a field ahead of `detail` silently rebinds their arguments.
+    onset_ms: int | None = None
 
 
 @dataclass
@@ -67,6 +71,16 @@ class Episode:
     peak_score: float
     window_count: int
     threshold: float
+    # When this channel actually departed, as opposed to which window noticed. `t_start_ms`
+    # is a window boundary and is therefore quantised to the slide: at a 10 s slide the only
+    # differences expressible between two episodes' starts are 0, 10, 20 ... seconds. Asking
+    # whether two channels moved together needs finer resolution than the geometry provides,
+    # which is exactly what the v1 and v2 conditioning measurements ran into (B-4).
+    #
+    # Taken from the window that *opened* the episode, not from the whole episode: later
+    # windows of a sustained excursion are departed from their first sample, so their own
+    # onsets sit on window boundaries and would drag this back to the quantised value.
+    onset_ms: int | None = None
     scores: list[ScoreSample] = field(default_factory=list)
     status: EpisodeStatus = EpisodeStatus.REAL
     attributed_to: str | None = None
@@ -78,6 +92,16 @@ class Episode:
     @property
     def duration_ms(self) -> int:
         return self.t_end_ms - self.t_start_ms
+
+    @property
+    def began_ms(self) -> int:
+        """The best available start time: the true onset, or the window start if there is none.
+
+        Callers that compare episodes in time should use this rather than `t_start_ms`, so a
+        detector that cannot report an onset degrades to the old quantised behaviour instead
+        of losing the comparison entirely.
+        """
+        return self.onset_ms if self.onset_ms is not None else self.t_start_ms
 
     @property
     def mean_score(self) -> float:
@@ -136,6 +160,7 @@ class EpisodeBuilder:
             window_end_ms=score.window_end_ms,
             score=score.score,
             latency_ms=score.latency_ms,
+            onset_ms=score.onset_ms,
             detail=dict(score.detail),
         )
         origins = tuple(o for o in injected_origins if o is not None)
@@ -154,6 +179,7 @@ class EpisodeBuilder:
                     peak_score=score.score,
                     window_count=1,
                     threshold=self.threshold,
+                    onset_ms=score.onset_ms,
                     scores=[sample],
                     injected_origins=tuple(dict.fromkeys(origins)),
                 ),

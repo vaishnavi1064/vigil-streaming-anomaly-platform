@@ -242,7 +242,7 @@ class DetectionSpine:
             # Record the flag before deciding, so an episode's in-scope siblings are already
             # in the index when its own turn comes. Deciding first would make the verdict
             # depend on the order episodes happened to close in.
-            self.conditioning.index.record(episode.channel, episode.t_start_ms, episode.t_end_ms)
+            self.conditioning.index.record(episode.channel, episode.began_ms, episode.t_end_ms)
             attribution = self.conditioning.apply(episode)
             if attribution.event is not None:
                 # The episode's attributed_to is a foreign key into context_events, so the

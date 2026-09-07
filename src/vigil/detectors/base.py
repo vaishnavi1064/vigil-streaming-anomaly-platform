@@ -38,6 +38,12 @@ class DetectorScore:
     # the latency budget in NFR-1 can be reported as a percentile over real work rather
     # than as an average that hides the tail.
     latency_ms: float = 0.0
+    # Event time of the reading that actually drove this score, not the window boundary.
+    # The boundary is quantised to the slide, which makes it useless for asking whether two
+    # channels moved *together*: at a 10 s slide the only gaps expressible between two
+    # window starts are 0, 10, 20 ... seconds, so any tolerance finer than a slide collapses
+    # to "same bucket". Detectors that cannot identify a driving sample leave it None.
+    onset_ms: int | None = None
     detail: dict[str, Any] = field(default_factory=dict)
 
 

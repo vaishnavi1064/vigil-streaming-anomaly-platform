@@ -248,3 +248,65 @@ def test_raw_readings_have_nowhere_to_go_in_this_schema(store):
         "reconciliation_runs",
     }
     assert not any("reading" in t for t in tables)
+
+
+def test_the_onset_is_persisted_and_survives_a_replay(store, settings):
+    """The onset is what the conditioning measurement turns on, so it has to be auditable.
+
+    On conflict it is kept rather than overwritten: a replay re-derives the same episode from
+    the same records, and if the two ever disagreed the first observation is the one taken
+    while the window was closing rather than one reconstructed afterwards.
+    """
+    first = Episode(
+        channel="pump-07.flow_m3_h",
+        t_start_ms=60_000,
+        t_end_ms=90_000,
+        raised_by="zscore",
+        peak_score=40.0,
+        window_count=3,
+        threshold=8.0,
+        onset_ms=61_800,
+    )
+    episode_id = store.record_episode(first)
+
+    with store._conn.cursor() as cur:
+        cur.execute("SELECT onset_ms FROM episodes WHERE id = %s", (episode_id,))
+        assert cur.fetchone()["onset_ms"] == 61_800
+
+    store.record_episode(
+        Episode(
+            channel=first.channel,
+            t_start_ms=first.t_start_ms,
+            t_end_ms=first.t_end_ms,
+            raised_by=first.raised_by,
+            peak_score=45.0,
+            window_count=4,
+            threshold=8.0,
+            onset_ms=70_000,
+        )
+    )
+
+    with store._conn.cursor() as cur:
+        cur.execute("SELECT onset_ms, peak_score FROM episodes WHERE id = %s", (episode_id,))
+        row = cur.fetchone()
+    assert row["onset_ms"] == 61_800
+    assert float(row["peak_score"]) == 45.0
+
+
+def test_an_episode_with_no_onset_stores_null_rather_than_its_window_start(store):
+    """Null and "the boundary" must stay distinguishable in the record."""
+    episode_id = store.record_episode(
+        Episode(
+            channel="pump-08.vibration_mm_s",
+            t_start_ms=60_000,
+            t_end_ms=90_000,
+            raised_by="chronos-bolt-tiny",
+            peak_score=12.0,
+            window_count=2,
+            threshold=8.0,
+        )
+    )
+
+    with store._conn.cursor() as cur:
+        cur.execute("SELECT onset_ms FROM episodes WHERE id = %s", (episode_id,))
+        assert cur.fetchone()["onset_ms"] is None

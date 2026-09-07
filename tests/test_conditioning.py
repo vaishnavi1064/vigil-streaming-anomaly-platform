@@ -463,3 +463,132 @@ def test_the_index_still_answers_the_loose_question_for_comparison():
     index.record(FLEET[1], 85_000, 115_000)
     assert index.flagged_in(60_000, 90_000) == {FLEET[0], FLEET[1]}
     assert index.synchronous_with(60_000) == {FLEET[0]}
+
+
+# ------------------------- onset resolution: the v2 failure (B-4) -------------------------
+# v1 and v2 both asked a coincidence question because an episode was timestamped with the
+# start of the window that noticed it. Windows slide by 10 s, so the only start gaps two
+# episodes could have were 0, 10, 20 ... seconds, and a 5 s synchrony tolerance selected
+# exactly one of them: zero. These tests hold the fix: an episode carries the event time of
+# the reading that drove it, so two channels that moved seconds apart are seconds apart.
+
+
+def episode_with_onset(channel, onset_ms, window_start_ms=60_000, window_end_ms=90_000):
+    return Episode(
+        channel=channel,
+        t_start_ms=window_start_ms,
+        t_end_ms=window_end_ms,
+        raised_by="zscore",
+        peak_score=40.0,
+        window_count=3,
+        threshold=8.0,
+        onset_ms=onset_ms,
+    )
+
+
+def test_two_episodes_in_one_window_no_longer_collapse_to_the_same_timestamp():
+    """The defect, stated directly: same window, seconds apart, must not read as identical."""
+    first = episode_with_onset(FLEET[0], onset_ms=61_200)
+    second = episode_with_onset(FLEET[1], onset_ms=68_900)
+
+    assert first.t_start_ms == second.t_start_ms, "same window, which is the premise"
+    assert first.began_ms != second.began_ms
+    assert second.began_ms - first.began_ms == 7_700
+
+
+def test_the_index_separates_them_at_a_tolerance_finer_than_the_slide():
+    index = FlaggedWindowIndex(window_ms=30_000, synchrony_ms=5_000)
+    index.record(FLEET[0], episode_with_onset(FLEET[0], onset_ms=61_200).began_ms, 90_000)
+
+    late = episode_with_onset(FLEET[1], onset_ms=68_900)
+    early = episode_with_onset(FLEET[2], onset_ms=62_500)
+
+    # Before the fix both of these compared as 60_000 against 60_000 and were "synchronous".
+    assert index.synchronous_with(late.began_ms, 5_000) == set()
+    assert index.synchronous_with(early.began_ms, 5_000) == {FLEET[0]}
+
+
+def test_an_episode_without_an_onset_falls_back_to_the_window_start():
+    """A detector that cannot name a driving sample degrades, rather than losing the field."""
+    without = Episode(
+        channel=FLEET[0],
+        t_start_ms=60_000,
+        t_end_ms=90_000,
+        raised_by="chronos-bolt-tiny",
+        peak_score=12.0,
+        window_count=2,
+        threshold=8.0,
+    )
+
+    assert without.onset_ms is None
+    assert without.began_ms == 60_000
+
+
+def test_the_builder_takes_its_onset_from_the_window_that_opened_the_episode():
+    """A sustained excursion is departed from the first sample of every later window.
+
+    Those later windows honestly report an onset on their own boundary, and letting them
+    revise the episode's onset would drag it back onto the quantised grid the fix exists to
+    escape.
+    """
+    from vigil.detectors.base import DetectorScore
+    from vigil.episodes import EpisodeBuilder
+
+    builder = EpisodeBuilder(threshold=8.0, merge_gap_ms=20_000)
+    builder.add(
+        DetectorScore(
+            detector="zscore",
+            channel=FLEET[0],
+            window_start_ms=60_000,
+            window_end_ms=90_000,
+            score=40.0,
+            onset_ms=63_400,
+        )
+    )
+    builder.add(
+        DetectorScore(
+            detector="zscore",
+            channel=FLEET[0],
+            window_start_ms=70_000,
+            window_end_ms=100_000,
+            score=45.0,
+            onset_ms=70_000,
+        )
+    )
+    episode = next(builder.close_all())
+
+    assert episode.onset_ms == 63_400
+    assert episode.window_count == 2
+
+
+def test_the_same_data_corroborates_on_window_starts_and_does_not_on_onsets():
+    """The fix, shown as a difference in verdict on identical episodes.
+
+    Three in-scope channels flagged in one 30-second window. Two of them moved within a
+    second of each other; the third moved seventeen seconds later, which is a different
+    event that happens to share a bucket. Recorded by window start, all three are
+    indistinguishable and the deploy takes the blame for all of them. Recorded by onset, the
+    late one is visibly not part of the same movement.
+    """
+    subject = episode_with_onset(FLEET[0], onset_ms=61_800)
+    siblings = [
+        episode_with_onset(FLEET[1], onset_ms=61_000),
+        episode_with_onset(FLEET[2], onset_ms=78_000),
+    ]
+    thresholds = ConditioningThresholds(synchrony_ms=5_000, min_corroborating_channels=3)
+
+    def verdict_when(recorded):
+        index = FlaggedWindowIndex(window_ms=30_000, synchrony_ms=5_000)
+        for sibling in siblings:
+            index.record(sibling.channel, recorded(sibling), sibling.t_end_ms)
+        policy = ConditioningPolicy(
+            source=StaticContextSource([deploy(scope=FLEET[:4])]),
+            index=index,
+            thresholds=thresholds,
+        )
+        return policy.decide(subject).verdict
+
+    # What v1 and v2 actually did: every episode timestamped with its window boundary.
+    assert verdict_when(lambda e: e.t_start_ms) is Verdict.CORROBORATED
+    # What the record now carries.
+    assert verdict_when(lambda e: e.began_ms) is not Verdict.CORROBORATED

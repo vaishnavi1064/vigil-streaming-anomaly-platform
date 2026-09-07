@@ -44,6 +44,10 @@ CREATE TABLE IF NOT EXISTS episodes (
     -- Set when conditioning attributes this episode to an operational event (Phase 3).
     attributed_to   TEXT REFERENCES context_events (event_id),
     explanation     TEXT,
+    -- Event time of the reading that drove the episode, as opposed to the boundary of the
+    -- window that noticed it. Nullable: a detector that cannot name a driving sample says so
+    -- rather than repeating the boundary and making the two indistinguishable.
+    onset_ms        BIGINT,
     -- Ground truth from the synthetic source: which origins ('fault', 'deploy',
     -- 'pipeline') were actually injected inside this episode's span. Empty on live data.
     injected_origins TEXT[] NOT NULL DEFAULT '{}',
@@ -55,6 +59,10 @@ CREATE TABLE IF NOT EXISTS episodes (
     -- reporting our own bookkeeping rather than a pipeline fault.
     CONSTRAINT episodes_identity UNIQUE (channel, t_start_ms, raised_by)
 );
+
+-- Added after the table existed in deployed databases, so it cannot live in the CREATE
+-- above: CREATE TABLE IF NOT EXISTS never alters an existing table.
+ALTER TABLE episodes ADD COLUMN IF NOT EXISTS onset_ms BIGINT;
 
 CREATE INDEX IF NOT EXISTS episodes_recent_idx ON episodes (created_at DESC);
 CREATE INDEX IF NOT EXISTS episodes_channel_span_idx ON episodes (channel, t_start_ms);
