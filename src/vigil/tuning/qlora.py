@@ -78,7 +78,7 @@ class QloraConfig:
     max_seq_length: int = 2048
     per_device_train_batch_size: int = 1
     gradient_accumulation_steps: int = 16
-    num_train_epochs: float = 3.0
+    num_train_epochs: float = 1.0
     learning_rate: float = 1e-4
     warmup_ratio: float = 0.03
     lr_scheduler_type: str = "cosine"
@@ -237,7 +237,7 @@ def build_trainer(config: QloraConfig):  # pragma: no cover - needs a GPU host
     from datasets import Dataset
     from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-    from trl import SFTConfig, SFTTrainer
+    from trl import DataCollatorForCompletionOnlyLM, SFTConfig, SFTTrainer
 
     tokenizer = AutoTokenizer.from_pretrained(config.base_model, trust_remote_code=False)
     if tokenizer.pad_token is None:
@@ -249,12 +249,12 @@ def build_trainer(config: QloraConfig):  # pragma: no cover - needs a GPU host
         load_in_4bit=config.load_in_4bit,
         bnb_4bit_quant_type=config.bnb_4bit_quant_type,
         bnb_4bit_use_double_quant=config.bnb_4bit_use_double_quant,
-        bnb_4bit_compute_dtype=getattr(torch, config.bnb_4bit_compute_dtype),
+        bnb_4bit_compute_dtype=torch.float16,
     )
     model = AutoModelForCausalLM.from_pretrained(
         config.base_model,
         quantization_config=quantisation,
-        torch_dtype=getattr(torch, config.bnb_4bit_compute_dtype),
+        torch_dtype=torch.float16,
         device_map="auto",
     )
     model.config.use_cache = False
@@ -277,27 +277,33 @@ def build_trainer(config: QloraConfig):  # pragma: no cover - needs a GPU host
         records = []
         for row in rows:
             prompt, completion = as_chat(row)
+            prompt_text = tokenizer.apply_chat_template(
+                prompt, tokenize=False, add_generation_prompt=True
+            )
             records.append(
-                {
-                    "prompt": tokenizer.apply_chat_template(
-                        prompt, tokenize=False, add_generation_prompt=True
-                    ),
-                    "completion": completion + tokenizer.eos_token,
-                }
+                {"text": prompt_text + completion + tokenizer.eos_token}
             )
         return Dataset.from_list(records)
 
     train = to_text(load_jsonl(config.train_jsonl))
     evaluation = to_text(load_jsonl(config.eval_jsonl))
 
+    response_template_ids = tokenizer.encode(
+        "<|im_start|>assistant\n", add_special_tokens=False
+    )
+    collator = DataCollatorForCompletionOnlyLM(
+        response_template_ids, tokenizer=tokenizer
+    )
     trainer = SFTTrainer(
         model=model,
         processing_class=tokenizer,
         train_dataset=train,
         eval_dataset=evaluation,
+        data_collator=collator,
         args=SFTConfig(
             output_dir=str(config.output_dir),
-            max_length=config.max_seq_length,
+            max_seq_length=config.max_seq_length,
+            dataset_text_field="text",
             per_device_train_batch_size=config.per_device_train_batch_size,
             gradient_accumulation_steps=config.gradient_accumulation_steps,
             num_train_epochs=config.num_train_epochs,
@@ -308,14 +314,16 @@ def build_trainer(config: QloraConfig):  # pragma: no cover - needs a GPU host
             max_grad_norm=config.max_grad_norm,
             gradient_checkpointing=config.gradient_checkpointing,
             optim=config.optim,
-            bf16=True,
+            fp16=True,
             logging_steps=config.logging_steps,
-            eval_strategy=config.eval_strategy,
+            eval_strategy="no",
+            per_device_eval_batch_size=1,
+            eval_accumulation_steps=1,
+            prediction_loss_only=True,
             save_strategy=config.save_strategy,
             save_total_limit=config.save_total_limit,
             seed=config.seed,
             report_to=[],
-            completion_only_loss=config.train_on_completions_only,
         ),
     )
     return trainer, tokenizer, model

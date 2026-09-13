@@ -183,14 +183,28 @@ def score_baseline(cases: list[HardCase], as_deployed: bool = False) -> PlannerS
     return score
 
 
-def score_model(cases: list[HardCase], generate, name: str) -> PlannerScore:
-    """Any callable that maps (system, user) to a reply string."""
+def score_model(cases: list[HardCase], generate, name: str, cache_path: Path | None = None) -> PlannerScore:
+    """Any callable that maps (system, user) to a reply string. Resumable via cache_path."""
+    done: dict[str, str] = {}
+    if cache_path and cache_path.exists():
+        for row in cache_path.read_text().splitlines():
+            if row.strip():
+                rec = json.loads(row)
+                done[rec["episode_id"]] = rec["raw"]
+        print(f"  resuming: {len(done)} cached cases found", flush=True)
     score = PlannerScore(planner=name, cases=len(cases))
-    for case in cases:
-        prompt = render_hard_prompt(case)
-        started = time.perf_counter()
-        raw = generate(HARD_SYSTEM_PROMPT, prompt)
-        score.latencies_ms.append((time.perf_counter() - started) * 1000.0)
+    for i, case in enumerate(cases, 1):
+        if case.episode_id in done:
+            raw = done[case.episode_id]
+            print(f"  {name}: case {i}/{len(cases)} (cached)", flush=True)
+        else:
+            print(f"  {name}: case {i}/{len(cases)}", flush=True)
+            started = time.perf_counter()
+            raw = generate(HARD_SYSTEM_PROMPT, render_hard_prompt(case))
+            score.latencies_ms.append((time.perf_counter() - started) * 1000.0)
+            if cache_path:
+                with cache_path.open("a") as fh:
+                    fh.write(json.dumps({"episode_id": case.episode_id, "raw": raw}) + "\n")
         parsed = parse_plan(raw)
         gate = SafetyGate(policy=GatePolicy())
         for action in parsed.actions:
@@ -222,9 +236,9 @@ def local_adapter(adapter: Path, base_model: str, max_new_tokens: int = 320):  #
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
             bnb_4bit_use_double_quant=True,
-            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_compute_dtype=torch.float16,
         ),
-        torch_dtype=torch.bfloat16,
+        torch_dtype=torch.float16,
         device_map="auto",
     )
     model = PeftModel.from_pretrained(model, str(adapter))
@@ -313,7 +327,7 @@ def main(argv: list[str] | None = None) -> int:
     model = None
     if args.adapter:
         model = score_model(
-            cases, local_adapter(args.adapter, args.base_model), f"qlora:{args.adapter.name}"
+            cases, local_adapter(args.adapter, args.base_model), f"qlora:{args.adapter.name}", cache_path=REPO / "artifacts" / "planner-eval-progress.jsonl"
         )
     elif args.endpoint:
         model = score_model(
