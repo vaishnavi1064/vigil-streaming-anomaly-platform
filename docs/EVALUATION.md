@@ -6,21 +6,25 @@
 
 **Reference hardware for every number in this file:** Intel Core i7-12650H (10 cores /
 16 threads), 15.6 GB RAM, NVIDIA RTX 3050 Ti Laptop (4 GB VRAM), Windows 11, Docker Desktop
-with 16 CPU / 8.1 GB allocated to the VM, Python 3.12.10.
+with 16 CPU / 8.1 GB allocated to the VM, Python 3.12.10. **One exception, named where it
+appears:** the QLoRA planner numbers in section 6 were produced on a V100-SXM2-32GB, because
+a 7B adapter does not fit in 4 GB of VRAM.
 
 ---
 
 ## 1. What is being evaluated, and against what
 
-Three separate questions, deliberately not blended into one score:
+Four separate questions, deliberately not blended into one score:
 
 | # | Question | Data | Compared against |
 |---|---|---|---|
 | Q1 | Does context-conditioned detection reduce false positives without losing real anomalies? | Adversarial scenario runs (section 3) + chaos-injected pipeline faults | The **unconditioned** baseline on identical data, via a shadow pass |
 | Q2 | Is the foundation-model detector actually better than a cheap baseline? | TSB-AD-M, 200 labelled multivariate series | Rolling z-score baseline |
 | Q3 | What does detection cost in latency and throughput? | Synthetic load harness | The NFR budgets in `REQUIREMENTS.md` |
+| Q4 | Does a fine-tuned planner beat the deterministic one on cases the rules get wrong? | 300 held-out hard planning cases (section 6) | The deployed rule-based planner, scored two ways |
 
-Q1 is the core contribution. Q2 is the honest-benchmark obligation. Q3 is the engineering budget.
+Q1 is the core contribution. Q2 is the honest-benchmark obligation. Q3 is the engineering
+budget. Q4 is the one question whose answer came out in the model's favour.
 
 ---
 
@@ -965,7 +969,148 @@ produces the scaling curve.
 
 ---
 
-## 6. Honesty rules held in this document
+## 6. Q4 — the fine-tuned planner against the deterministic one
+
+**Hardware exception, stated because the rest of this file promises otherwise.** Every other
+number here was taken on the reference laptop. This one could not be: the adapter is a 7B
+model in NF4 and the laptop has 4 GB of VRAM (C-1). Training and scoring both ran on
+**Northeastern Explorer**, one **V100-SXM2-32GB**, Python 3.12, torch 2.5.1+cu121,
+transformers 4.46.3, peft 0.13.2, trl 0.12.0, bitsandbytes 0.45.0.
+
+**What is being asked.** Not "does the model emit valid JSON" — a template does that. The
+claim under test is that a fine-tuned planner **beats the deployed rules on the cases the
+rules get wrong**, so every metric is reported for all three planners on the same 300 held-out
+cases.
+
+**The split.** `vigil.tuning.hard`, 300 cases, seed 20260907, `split="test"`. Episode shapes
+outside the five symptoms `Diagnoser` can name — and it has no fall-through, so it
+misclassifies them rather than abstaining — on channels and metric vocabularies the training
+split never contains, with every runbook passage stating its licences in prose rather than as
+a machine-readable line, and retrieval returning the matching passage plus two distractors.
+Targets come from the hand-written teacher policy in `vigil.tuning.hard.TEACHER` (ADR-036), so
+**the teacher is the ceiling**: a model can reach that policy and cannot exceed it.
+
+**Both baselines are reported, because either alone misleads.** *As deployed* is the live
+parser, which finds no `licensed-actions:` line in a prose passage and therefore escalates on
+everything. *Given licences* hands the rules the machine-readable licence set the parser could
+not have extracted — deliberately generous, so it measures the rules' reasoning rather than
+their inability to read.
+
+```bash
+python train_planner.py --base-model Qwen/Qwen2.5-7B-Instruct
+python evaluate_planner.py --adapter artifacts/planner-qlora \
+    --base-model Qwen/Qwen2.5-7B-Instruct \
+    --report-json docs/results/planner-eval.json
+```
+
+**The training run.** QLoRA: NF4 double-quantised weights, fp16 compute (ADR-039 — Volta has
+no bf16), LoRA r=32 on the attention and MLP projections, effective batch 16, lr 1e-4,
+completion-only loss via `DataCollatorForCompletionOnlyLM`. One epoch, **75 optimizer steps in
+34.6 minutes**, final `train_loss` **0.034**, no NaN in any logged step.
+
+### 6.1 Head to head, 300 held-out cases
+
+Raw result in `docs/results/planner-eval.json`.
+
+| Planner | Exact match | Action-set match | Proposed a forbidden action | Missed a wanted action | Escalated only | p50 per plan |
+|---|---|---|---|---|---|---|
+| rules, **as deployed** | 0.0% (0/300) | 0.0% | 0.0% (0) | 100% (300) | 100% (300) | 0.006 ms |
+| rules, **given licences** | 20.0% (60/300) | 20.0% | **61.3% (184)** | 60.0% (180) | 0.0% | 0.009 ms |
+| **QLoRA Qwen2.5-7B-Instruct** | **97.7% (293/300)** | **97.7%** | **1.0% (3)** | **2.3% (7)** | 0.0% | 15,840 ms |
+| teacher policy | 100% by construction | 100% | 0% | 0% | — | — |
+
+**Against the generous baseline the exact-match delta is +77.7 points and the forbidden-action
+delta is -60.3 points. Against the baseline that actually runs, +97.7 points.** Put as
+headroom rather than as a difference of percentages: the gap between the generous rules and
+the teacher is 80 points, and the fine-tune closes **97.1%** of it.
+
+Exact match is order-sensitive and action-set match is not; they are identical here at 293, so
+the model made no ordering-only errors — gather evidence before changing state came out right
+in every plan it otherwise got right.
+
+Structural conformance across all 300 generated plans: **0 schema-invalid, 0 unknown verbs, 0
+fenced replies, 0 ungrounded actions** (every non-escalation action cited a licence present in
+the passage it was given), **0 gate rejections**.
+
+### 6.2 Per symptom, which is where the shape of the win is
+
+| Symptom | n | rules as deployed | rules given licences | fine-tuned |
+|---|---|---|---|---|
+| stuck_sensor | 60 | 0.0% | 0.0% | **100% (60)** |
+| oscillation | 60 | 0.0% | 0.0% | **100% (60)** |
+| counter_rollover | 60 | 0.0% | 0.0% | 95.0% (57) |
+| correlated_step | 60 | 0.0% | 0.0% | 93.3% (56) |
+| **slow_drift** | 60 | 0.0% | **100% (60)** | **100% (60)** |
+
+### 6.3 The honest reading
+
+**The win is precisely where the rules cannot go.** On the four symptoms the generous rules
+score 0/60, the model scores 60, 60, 57 and 56. It is not edging past a baseline on shared
+ground; it is answering a population the baseline has no route to, because the licence is in
+prose and the symptom is one `Diagnoser` names wrongly.
+
+**slow_drift is the control, and it holds.** That symptom is in the set for one reason: it is
+the case the rules get right. A model that had learned the cheap policy — *disagree with the
+deterministic planner* — would score near zero on it. It scores 60/60, the same as the rules.
+So the fine-tune learned the teacher's policy, not the complement of the baseline. That is the
+specific failure mode ADR-036 shaped the task to expose, and it did not occur.
+
+**Three forbidden actions, not zero.** Three of 300 plans (1.0%) contain an action the
+teacher's policy forbids for that symptom, against 184 of 300 (61.3%) for the generous rules.
+That is a 60-point reduction in proposed harm alongside the capability gain, and it is the
+more interesting half of the result — the usual worry is that a more capable planner proposes
+more dangerous things, and here it proposed fewer. But it is 1.0% and not 0.0%, and the
+difference matters: on this evidence the model is **much safer than the rules, not safe**.
+
+**The safety gate caught none of the three, and would not have.** `gate_rejected` is 0 across
+all 300 model plans. The deterministic gate checks blast radius, action class and episode
+state; it does not check whether an action is appropriate *to the symptom*, which is what the
+teacher's forbidden set encodes. So the residual harm sits outside the gate's jurisdiction by
+design (ADR-027, ADR-028). The gate is not a second line of defence against this class of
+error and should not be described as one.
+
+**The seven misses are two symptoms, not a spread.** All seven non-exact plans omitted a
+wanted action, and they fall entirely on counter_rollover (3) and correlated_step (4). No
+symptom's wanted and forbidden sets overlap, so a plan containing a forbidden action cannot be
+exact, which places all three forbidden proposals inside those seven cases. Both symptoms
+share a feature the other three lack: the correct plan turns on evidence from *outside* the
+flagged channel — a rollover has to be told apart from a genuine counter reset, a correlated
+step has to be checked against pipeline health. That is a plausible account of the residual,
+not a measured one: the per-case replies were not retained from the cluster run.
+
+**Latency: 15.8 s per plan, and it is not a deployable number.** p50 15.8 s, p95 21.1 s, range
+9.3-22.2 s, 78 minutes for the full 300-case pass. That is roughly 1.7 million times the
+rules' 0.009 ms, and it measures 4-bit sequential generation on a V100 at batch size 1 with no
+serving stack — not the vLLM path Phase 5 specifies. The comparison is not like-for-like
+either: the rules' figure times the `plan()` call alone, the model's a full generation. What
+it does establish is that this planner cannot sit on the hot path in this serving
+configuration. It does not need to — the agent plans *after* an episode is raised, off the
+critical path, so the 250 ms budget in section 5.2 does not apply to it. No latency claim for
+a served adapter is made here, because none has been measured.
+
+### 6.4 What this does not establish
+
+- **The ceiling is a hand-written policy.** 97.7% is agreement with `TEACHER`: five policies
+  written by one person, with their justifications recorded. It is not agreement with ground
+  truth. A teacher that is wrong about an operational question would be reproduced faithfully
+  by this model and scored as correct.
+- **Held-out means distribution-shifted, not independently sourced.** Both splits come from
+  the same generator. The test split withholds the training channels, metric vocabulary and
+  sentence templates, and states licences in prose the training split never uses — a real
+  shift, and the one the rules fail on — but no operator wrote these runbooks, and the result
+  does not transfer to real ones without being re-measured on them.
+- **One adapter, one pass, one seed.** Decoding is greedy (`do_sample=False`), so the numbers
+  are reproducible from this adapter, but nothing here estimates variance across training
+  seeds. A second run could land somewhere in a range this measurement cannot bound.
+- **fp16 and one epoch, both deviations from the B-3 spec** (bf16, three epochs). The
+  measurement describes the adapter that exists, not the one the spec planned. ADR-039.
+- **The adapter is not wired into the running agent.** `RemediationAgent` still defaults to
+  `RunbookPlanner`, so every other number in this repository that involves a plan comes from
+  the deterministic planner. D-6 is not yet reversed.
+
+---
+
+## 7. Honesty rules held in this document
 
 - Every number states the hardware and the command that produced it.
 - A target that is missed is reported as missed, not quietly re-scoped afterwards. Revisions to
