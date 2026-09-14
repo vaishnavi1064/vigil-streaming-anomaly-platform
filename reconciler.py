@@ -34,8 +34,9 @@ from vigil.reconciliation.harness import (
     build_consumer,
     consume_forever,
 )
+from vigil.reconciliation.lake_audit import audit_lake, compare_to_ledger
 from vigil.reconciliation.ledger import HealthThresholds
-from vigil.settings import KafkaSettings, PostgresSettings
+from vigil.settings import KafkaSettings, LakeSettings, PostgresSettings
 from vigil.store import EpisodeStore
 
 log = logging.getLogger("vigil.reconciler")
@@ -139,6 +140,8 @@ def run(args: argparse.Namespace) -> int:
                     flush=True,
                 )
 
+        lake_ok = _audit_lake(led) if args.audit_lake else True
+
         if store is not None:
             written = _persist(store, harness, audit, elapsed)
             print(f"persisted {written:,} health windows to postgres", flush=True)
@@ -149,7 +152,62 @@ def run(args: argparse.Namespace) -> int:
             print(f"report written to {args.report_json}", flush=True)
 
     # A non-zero exit on drift makes this usable as a gate in CI and in the chaos suite.
-    return 0 if (led.total_drift == 0 and not unhealthy) else 1
+    return 0 if (led.total_drift == 0 and not unhealthy and lake_ok) else 1
+
+
+def _audit_lake(led) -> bool:
+    """Audit the stored lake and compare it, channel by channel, against the live ledger.
+
+    Returns whether the lake is clean *and* agrees with the ledger. Two counts derived from
+    different places agreeing is the only reason to believe either: the ledger counted
+    records as they streamed past, the lake counted rows written to object storage, and the
+    two share no code and no state.
+    """
+    try:
+        from vigil.lake import ReadingsLake
+
+        audit = audit_lake(ReadingsLake(LakeSettings.from_env()))
+    except Exception as exc:  # noqa: BLE001 - an unreachable lake is a reported finding
+        print()
+        print(f"lake audit skipped: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+        return True
+
+    print()
+    print("=" * 78, flush=True)
+    print("lake audit (Iceberg, the stored source of truth)", flush=True)
+    print("=" * 78, flush=True)
+    print(audit.line(), flush=True)
+    if audit.reused_seq:
+        print(
+            f"  {audit.reused_seq:,} readings share a seq with another: the producer's "
+            "sequence restarted inside this table's history (ADR-046), which is a fact "
+            "about the producer and not a fault in the lake",
+            flush=True,
+        )
+
+    ledger_counts = {name: ledger.readings for name, ledger in led.channels.items()}
+    agreements = compare_to_ledger(audit, ledger_counts)
+    disagreeing = [a for a in agreements if not a.agrees]
+    print()
+    print(
+        f"ledger vs lake: {len(agreements) - len(disagreeing)}/{len(agreements)} channels agree",
+        flush=True,
+    )
+    for a in disagreeing[:20]:
+        print(
+            f"  {a.channel:<40} ledger {a.ledger_readings:>9,}  lake {a.lake_readings:>9,}"
+            f"  difference {a.difference:+,}",
+            flush=True,
+        )
+    if disagreeing:
+        print(
+            "A difference here is expected when the two did not cover the same span of the "
+            "log -- the lake retains what the broker has already aged out, and this run read "
+            "only what the broker still held. It is a finding to explain, not automatically "
+            "a fault.",
+            flush=True,
+        )
+    return audit.clean and not disagreeing
 
 
 def _persist(store: EpisodeStore, harness, audit, elapsed_s: float) -> int:
@@ -276,6 +334,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="publish health only for disturbed windows. Off by default: a consumer must be "
         "able to tell a clean window from a missing signal (ADR-007)",
+    )
+    p.add_argument(
+        "--audit-lake",
+        action="store_true",
+        help="also audit the Iceberg lake and compare it channel-by-channel against the ledger",
     )
     p.add_argument("--no-emit", action="store_true", help="audit only, publish nothing")
     p.add_argument("--no-store", action="store_true", help="skip persisting to postgres")

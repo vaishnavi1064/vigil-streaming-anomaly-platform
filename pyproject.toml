@@ -30,6 +30,14 @@ explain = [
     "httpx>=0.27",
     "anthropic>=0.40",
 ]
+lake = [
+    # The Iceberg event lake on MinIO (ADR-043, ADR-044). Optional because the detection
+    # spine and the dashboard API never touch it: only the lake sink and the reconciliation
+    # harness's --audit-lake pass do, and both import pyiceberg lazily so the rest of the
+    # platform starts without any of this installed.
+    "pyiceberg[s3fs,sql-postgres,pyiceberg-core]>=0.9",
+    "pyarrow>=17",
+]
 train = [
     # The QLoRA fine-tune of the tool-calling planner (B-3). Installed on the GPU host only:
     # none of it fits in 4 GB of VRAM, and `train_planner.py --dry-run` deliberately works
