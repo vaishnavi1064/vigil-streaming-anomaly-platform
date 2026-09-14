@@ -14,6 +14,9 @@ dependencies = [
     # The serving store (ADR-006). Core rather than optional: the dashboard API's metrics
     # endpoints have nowhere else to read from, and a pure-HTTP client is a small dependency.
     "clickhouse-connect>=0.8",
+    # The /metrics exporter. Core because the endpoint is part of the API, and the whole
+    # point of Phase 6's observability is that it is always there to scrape.
+    "prometheus-client>=0.20",
 ]
 
 [project.optional-dependencies]

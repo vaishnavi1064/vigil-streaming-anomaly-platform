@@ -15,9 +15,11 @@ import time
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 from vigil.api.dashboard import DASHBOARD_HTML
+from vigil.api.metrics import CONTENT_TYPE as METRICS_CONTENT_TYPE
+from vigil.api.metrics import collect as collect_metrics
 from vigil.settings import ClickHouseSettings, PostgresSettings
 from vigil.store import EpisodeStore
 from vigil.warehouse import ReadingsWarehouse
@@ -210,9 +212,13 @@ def reconciliation(windows: int = 60) -> dict[str, Any]:
     }
 
 
-@app.get("/metrics")
-def metrics() -> dict[str, Any]:
+@app.get("/channels")
+def channels() -> dict[str, Any]:
     """Per-channel telemetry rollups, served from ClickHouse.
+
+    Named `/channels` rather than `/metrics` because `/metrics` is Prometheus's conventional
+    path and belongs to the exporter below. This endpoint shapes rollups for the dashboard;
+    that one exports gauges for a scraper. Two different audiences, two different paths.
 
     This is the query the storage split exists for: a per-channel summary over every reading
     ever ingested, answered from the per-minute aggregate rather than by scanning the raw
@@ -236,7 +242,7 @@ def metrics() -> dict[str, Any]:
     }
 
 
-@app.get("/metrics/{channel}")
+@app.get("/channels/{channel}")
 def channel_series(channel: str, minutes: int = 60) -> dict[str, Any]:
     """Per-minute series for one channel: the dashboard's time-series panel."""
     with _warehouse() as warehouse:
@@ -276,6 +282,17 @@ def context_events(limit: int = 100) -> dict[str, Any]:
         )
         rows = cur.fetchall()
     return {"count": len(rows), "events": rows}
+
+
+@app.get("/metrics")
+def prometheus_metrics() -> Response:
+    """Prometheus scrape target.
+
+    Gauges read from the stores at scrape time rather than counters kept in this process:
+    the detector, reconciler and sinks are separate processes, so a counter here would
+    describe the API's uptime and not the pipeline's. `vigil.api.metrics` says why at length.
+    """
+    return Response(content=collect_metrics(), media_type=METRICS_CONTENT_TYPE)
 
 
 @app.get("/", response_class=HTMLResponse)

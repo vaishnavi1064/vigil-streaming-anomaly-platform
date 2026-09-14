@@ -1,0 +1,22 @@
+# Keep the build context small and keep host state out of the image. artifacts/ holds the
+# QLoRA adapter and dataset; .venv/ is a Windows virtualenv that would be useless and large
+# inside a Linux image; .env holds real credentials and must never be baked in.
+.venv/
+.env
+artifacts/
+Datasets/
+__pycache__/
+**/__pycache__/
+*.pyc
+.git/
+.github/
+docs/
+tests/
+k8s/
+terraform/
+monitoring/
+flink/
+clickhouse/
+scripts/
+Vigil_Complete_Reference.md
+*.sbatch
