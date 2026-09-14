@@ -1,0 +1,9 @@
+# State holds every generated password in cleartext. This is the single most important line
+# in this directory.
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+*.tfvars
+!example.tfvars
+crash.log
