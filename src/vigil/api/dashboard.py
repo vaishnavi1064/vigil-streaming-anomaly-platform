@@ -25,8 +25,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     --grid:           #e1e0d9;
     --baseline:       #c3c2b7;
     --border:         rgba(11,11,11,0.10);
+    /* Six series, because the live chart draws six channels and alternating two of them
+       makes a legend the only way to tell any line from another. Hues are spaced for
+       deuteranopia and protanopia (an Okabe-Ito-style ordering: blue, orange, green,
+       purple, teal, ochre) rather than picked by eye, and each is darkened for light mode
+       and lightened for dark so contrast against the surface holds in both. */
     --series-1:       #2a78d6;
     --series-2:       #eb6834;
+    --series-3:       #1a8a4f;
+    --series-4:       #8552d6;
+    --series-5:       #0a8f93;
+    --series-6:       #9c6a12;
     --good:           #0ca30c;
     --warning:        #fab219;
     --critical:       #d03b3b;
@@ -43,6 +52,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       --border:         rgba(255,255,255,0.10);
       --series-1:       #3987e5;
       --series-2:       #d95926;
+      --series-3:       #35b06a;
+      --series-4:       #a37ae8;
+      --series-5:       #23b2b6;
+      --series-6:       #c9962f;
     }
   }
   * { box-sizing: border-box; }
@@ -98,6 +111,35 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .budget-ok { color: var(--good); }
   .budget-over { color: var(--critical); }
   .empty { color: var(--text-muted); padding: 18px 0; }
+
+  /* Live chart. Inline SVG rather than a charting library: the whole page is one string
+     served by FastAPI, and pulling in a bundle to draw six polylines would be the heaviest
+     dependency in the repository for the least of its work. */
+  .chart-head { display: flex; align-items: baseline; justify-content: space-between;
+                gap: 16px; flex-wrap: wrap; margin-bottom: 10px; }
+  .chart-rate { font-size: 26px; font-weight: 600; letter-spacing: -0.02em;
+                font-variant-numeric: tabular-nums; }
+  .chart-rate .unit { font-size: 13px; font-weight: 400; color: var(--text-secondary);
+                      margin-left: 5px; letter-spacing: 0; }
+  .chart-wrap { position: relative; }
+  svg.stream { width: 100%; height: 260px; display: block; overflow: visible; }
+  svg.stream .grid { stroke: var(--grid); stroke-width: 1; }
+  svg.stream .axis { stroke: var(--baseline); stroke-width: 1; }
+  svg.stream .tick { fill: var(--text-muted); font-size: 10px; }
+  svg.stream .line { fill: none; stroke-width: 1.4; vector-effect: non-scaling-stroke; }
+  svg.stream .ep-band { fill: var(--critical); opacity: 0.10; }
+  svg.stream .ep-rule { stroke: var(--critical); stroke-width: 1; stroke-dasharray: 3 3; }
+  svg.stream .ep-dot { fill: var(--critical); stroke: var(--surface); stroke-width: 1.5; }
+  svg.stream .ep-dot.attributed { fill: var(--text-muted); }
+  .live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+              background: var(--good); margin-right: 6px; vertical-align: middle; }
+  .live-dot.stalled { background: var(--warning); }
+  .marker-key { display: flex; gap: 18px; flex-wrap: wrap; color: var(--text-muted);
+                font-size: 12px; margin-top: 10px; }
+  .marker-key .k { display: inline-flex; align-items: center; gap: 6px; }
+  .marker-key .dot { width: 8px; height: 8px; border-radius: 50%;
+                     background: var(--critical); display: inline-block; }
+  .marker-key .dot.attributed { background: var(--text-muted); }
   footer { max-width: 1180px; margin: 28px auto 0; color: var(--text-muted); font-size: 12px; }
   a { color: var(--series-1); }
 </style>
@@ -111,6 +153,33 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
 <main>
   <section class="tiles" id="tiles"></section>
+
+  <section class="card">
+    <div class="chart-head">
+      <div>
+        <h2>Live stream</h2>
+        <p class="hint" id="chart-hint">Readings arriving now, averaged to one point per
+           second per channel. Each channel is scaled to its own range over the window --
+           flow and vibration differ by a factor of thirty, so a shared axis would draw one
+           line and flatten the rest.</p>
+      </div>
+      <div style="text-align:right">
+        <div class="chart-rate" id="rate">&mdash;</div>
+        <div class="hint" style="margin:0" id="rate-note">readings/s</div>
+      </div>
+    </div>
+    <div class="chart-wrap">
+      <svg class="stream" id="stream" role="img"
+           aria-label="Live sensor readings with detected anomalies marked"></svg>
+    </div>
+    <div class="legend" id="chart-legend"></div>
+    <div class="marker-key">
+      <span class="k"><span class="dot"></span>episode raised</span>
+      <span class="k"><span class="dot attributed"></span>attributed to a
+         context event, not paged</span>
+      <span class="k">shaded band spans the episode</span>
+    </div>
+  </section>
 
   <section class="card">
     <h2>Detectors</h2>
@@ -143,6 +212,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
 <script>
 const fmt = n => n === null || n === undefined ? "\\u2014" : n.toLocaleString();
+// Trailing window the live chart shows, how often it polls, and how long without a new
+// event before the stream is called idle. Three polls of silence, so one slow write does
+// not flip the indicator.
+const STREAM_WINDOW_S = 120;
+const STREAM_POLL_MS = 2000;
+const STREAM_STALL_MS = 3 * STREAM_POLL_MS;
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -348,8 +423,183 @@ async function load() {
     + new Date().toLocaleTimeString() + ".";
 }
 
+
+// ---------------------------------------------------------------------------------------
+// Live stream chart.
+//
+// Drawn as inline SVG with no charting library. The page is one string served by FastAPI,
+// and a bundle to draw six polylines would be the heaviest dependency in the repository for
+// the least of its work.
+//
+// Each channel is normalised to its own min/max over the visible window. A shared y-axis
+// would be honest about magnitude and useless to look at: flow sits near 144 and vibration
+// near 5, so one line would occupy the chart and the other five would be a flat smear along
+// the bottom. The hint under the heading says so, because a normalised axis that does not
+// announce itself is a way to mislead.
+// ---------------------------------------------------------------------------------------
+const SVG_NS = "http://www.w3.org/2000/svg";
+const CHART = { w: 1100, h: 260, padL: 8, padR: 8, padT: 14, padB: 22 };
+
+function svgEl(tag, attrs) {
+  const n = document.createElementNS(SVG_NS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  return n;
+}
+
+function clockLabel(ms) {
+  const d = new Date(ms);
+  const pad = v => String(v).padStart(2, "0");
+  return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+}
+
+function drawStream(data) {
+  const svg = document.getElementById("stream");
+  svg.replaceChildren();
+  svg.setAttribute("viewBox", `0 0 ${CHART.w} ${CHART.h}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+
+  const legend = document.getElementById("chart-legend");
+  legend.replaceChildren();
+
+  const channels = data.channels || [];
+  const hasPoints = channels.some(c => c.points.length > 1);
+  if (!hasPoints) {
+    // No data is reported as no data. A chart drawn from an empty window would be a flat
+    // line at zero, which looks like a measured quiet stream rather than an absent one.
+    svg.append(svgEl("rect", { x: 0, y: 0, width: CHART.w, height: CHART.h, fill: "none" }));
+    const t = svgEl("text", { x: CHART.w / 2, y: CHART.h / 2, "text-anchor": "middle",
+                              class: "tick" });
+    t.textContent = "no readings in the serving store yet "
+                  + "\u2014 start loadgen.py and warehouse.py";
+    svg.append(t);
+    return;
+  }
+
+  const t0 = data.from_ms, t1 = data.to_ms;
+  const span = Math.max(1, t1 - t0);
+  const plotW = CHART.w - CHART.padL - CHART.padR;
+  const plotH = CHART.h - CHART.padT - CHART.padB;
+  const x = ms => CHART.padL + plotW * ((ms - t0) / span);
+
+  // Time gridlines, one every fifth of the window.
+  for (let i = 0; i <= 5; i++) {
+    const ms = t0 + (span * i) / 5;
+    const px = x(ms);
+    svg.append(svgEl("line", { x1: px, y1: CHART.padT, x2: px, y2: CHART.padT + plotH,
+                               class: "grid" }));
+    const label = svgEl("text", { x: px, y: CHART.h - 6, class: "tick",
+                                  "text-anchor":
+                                    i === 0 ? "start" : (i === 5 ? "end" : "middle") });
+    label.textContent = clockLabel(ms);
+    svg.append(label);
+  }
+  svg.append(svgEl("line", { x1: CHART.padL, y1: CHART.padT + plotH,
+                             x2: CHART.padL + plotW, y2: CHART.padT + plotH, class: "axis" }));
+
+  // Episode bands go behind the lines so a marker never hides the excursion it marks.
+  const byChannel = new Map(channels.map((c, i) => [c.channel, i]));
+  for (const ep of (data.episodes || [])) {
+    const from = Math.max(ep.t_start_ms, t0), to = Math.min(ep.t_end_ms, t1);
+    if (to < t0 || from > t1) continue;
+    const bx = x(from), bw = Math.max(2, x(to) - bx);
+    svg.append(svgEl("rect", { x: bx, y: CHART.padT, width: bw, height: plotH,
+                               class: "ep-band" }));
+    const onset = ep.onset_ms && ep.onset_ms >= t0 && ep.onset_ms <= t1 ? ep.onset_ms : from;
+    svg.append(svgEl("line", { x1: x(onset), y1: CHART.padT, x2: x(onset),
+                               y2: CHART.padT + plotH, class: "ep-rule" }));
+  }
+
+  // One band per channel, stacked, each normalised to its own range.
+  const laneH = plotH / channels.length;
+  channels.forEach((c, i) => {
+    const colour = `var(--series-${(i % 6) + 1})`;
+    const values = c.points.map(p => p.value);
+    let lo = Math.min(...values), hi = Math.max(...values);
+    // A dead-flat channel is a line, not a divide-by-zero.
+    if (hi - lo < 1e-9) { lo -= 0.5; hi += 0.5; }
+    const top = CHART.padT + i * laneH + 4;
+    const h = laneH - 8;
+    const y = v => top + h * (1 - (v - lo) / (hi - lo));
+
+    const d = c.points.map((p, j) =>
+      (j ? "L" : "M") + x(p.t_ms).toFixed(1) + " " + y(p.value).toFixed(1));
+    const path = svgEl("path", { d: d.join(" "), class: "line", stroke: colour });
+    svg.append(path);
+
+    const chip = el("span", "swatch");
+    chip.style.background = colour;
+    const name = el("span");
+    name.append(chip, document.createTextNode(
+      `${c.channel} (${lo.toFixed(1)}\\u2013${hi.toFixed(1)})`));
+    name.title = `${c.channel}: ${c.points.length} seconds plotted, `
+               + `range ${lo.toFixed(3)} to ${hi.toFixed(3)} over this window`;
+    legend.append(name);
+
+    // Episode dots sit on this channel's own line, at the value the channel held then.
+    for (const ep of (data.episodes || [])) {
+      if (ep.channel !== c.channel) continue;
+      // Clamp to the visible window rather than skipping. An episode that began before
+      // the view still draws its band, and a band with no marker reads as a rendering bug
+      // rather than as "this started earlier"; the tooltip carries the true onset time.
+      const trueAt = ep.onset_ms || ep.t_start_ms;
+      if (ep.t_end_ms < t0 || ep.t_start_ms > t1) continue;
+      const at = Math.min(Math.max(trueAt, t0), t1);
+      let nearest = c.points[0];
+      for (const p of c.points) {
+        if (Math.abs(p.t_ms - at) < Math.abs(nearest.t_ms - at)) nearest = p;
+      }
+      const dot = svgEl("circle", {
+        cx: x(at).toFixed(1), cy: y(nearest.value).toFixed(1), r: 4.5,
+        class: "ep-dot" + (ep.status === "attributed" ? " attributed" : ""),
+      });
+      const title = svgEl("title");
+      title.textContent = `${ep.channel}: ${ep.raised_by} peak ${ep.peak_score}`
+        + (ep.status === "attributed" ? ` \\u2014 attributed to ${ep.attributed_to}` : "")
+        + ` \\u2014 ${clockLabel(trueAt)}`;
+      dot.append(title);
+      svg.append(dot);
+    }
+  });
+}
+
+let lastSeenEvent = null;
+let lastSeenAt = 0;
+
+async function tick() {
+  let data;
+  try {
+    data = await fetch("/stream?seconds=" + STREAM_WINDOW_S).then(r => r.json());
+  } catch (e) {
+    return;   // a failed poll is a skipped frame, not a broken page
+  }
+  drawStream(data);
+
+  const rate = document.getElementById("rate");
+  const note = document.getElementById("rate-note");
+  // "Moving" is decided by the newest event time changing between polls, not by the clock.
+  // A stopped producer should read as stopped rather than as a live stream at zero.
+  const now = Date.now();
+  if (data.last_event_ms && data.last_event_ms !== lastSeenEvent) {
+    lastSeenEvent = data.last_event_ms;
+    lastSeenAt = now;
+  }
+  const moving = lastSeenAt && (now - lastSeenAt) < STREAM_STALL_MS;
+  rate.replaceChildren();
+  const dot = el("span", "live-dot" + (moving ? "" : " stalled"));
+  rate.append(dot, document.createTextNode(fmt(data.readings_per_s ?? 0)));
+  const unit = el("span", "unit", "readings/s");
+  rate.append(unit);
+  note.textContent = moving
+    ? `mean over the last ${data.window_s}s \\u00b7 ${fmt(data.readings)} readings`
+    : "stream idle \\u2014 no new readings since the last poll";
+}
+
+// The panels read stored aggregates and change slowly; the chart is the live one, so the
+// two poll at different rates rather than dragging every panel to the chart's cadence.
 load();
 setInterval(load, 5000);
+tick();
+setInterval(tick, STREAM_POLL_MS);
 </script>
 </body>
 </html>

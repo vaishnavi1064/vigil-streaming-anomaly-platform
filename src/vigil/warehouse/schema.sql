@@ -5,10 +5,18 @@
 --
 -- Idempotent: safe to run on every startup.
 
--- Raw telemetry. ReplacingMergeTree keyed on the identity the whole platform already uses
--- (channel, seq), so a replayed Kafka batch collapses to one row per reading instead of
--- inflating every count computed here. The dedupe is eventual -- it happens on merge -- so
--- any query that must be exact says FINAL. `readings_exact` below is that view.
+-- Raw telemetry. ReplacingMergeTree keyed on (channel, seq, event_ts), so a replayed Kafka
+-- batch collapses to one row per reading instead of inflating every count computed here.
+--
+-- event_ts is in the key and (channel, seq) alone is not, which is ADR-046 and was found by
+-- running it: the per-channel sequence is assigned by the producer and restarts at 1 when the
+-- producer does, so two genuinely different readings eight minutes apart both arrived as
+-- seq=5. Keyed on (channel, seq) this table would have silently deleted the older one at
+-- merge time -- data loss reported as a successful dedupe. A real at-least-once redelivery
+-- carries an identical event_ts, so it still collapses; only distinct readings survive.
+--
+-- The dedupe is eventual -- it happens on merge -- so any query that must be exact says
+-- FINAL. `readings_exact` below is that view.
 CREATE TABLE IF NOT EXISTS readings
 (
     channel     LowCardinality(String),
@@ -25,7 +33,7 @@ CREATE TABLE IF NOT EXISTS readings
 )
 ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY toYYYYMMDD(event_ts)
-ORDER BY (channel, seq)
+ORDER BY (channel, seq, event_ts)
 SETTINGS index_granularity = 8192;
 
 -- Event-time lookups scan by channel and time, but the primary key is (channel, seq).
@@ -63,11 +71,13 @@ SETTINGS index_granularity = 8192;
 -- once per inserted block, so partial aggregates have to be mergeable across blocks or the
 -- rollup silently reports only the last block it saw.
 --
--- The count is uniqExact over seq, not count(). A materialized view runs on the rows being
--- inserted and never sees the ReplacingMergeTree dedupe that happens later at merge time,
--- so count() here reports rows written and double-counts a replayed batch -- measured: a
--- 100-reading batch replayed once made this rollup say 200. Counting distinct seq is
--- immune to that, and min/max are too because duplicating a value cannot change either.
+-- The count is uniqExact over (seq, event_ts), not count(). A materialized view runs on the
+-- rows being inserted and never sees the ReplacingMergeTree dedupe that happens later at
+-- merge time, so count() here reports rows written and double-counts a replayed batch --
+-- measured: a 100-reading batch replayed once made this rollup say 200. Counting distinct
+-- identities is immune to that, and min/max are too because duplicating a value cannot
+-- change either. The pair rather than seq alone for the reason in ADR-046: a producer
+-- restart reuses seq values, and counting those as one reading would undercount.
 --
 -- value_avg is the one aggregate that stays vulnerable. Sum and count both inflate on a
 -- replay, so the mean is exact when a partition was written once or replayed whole, and
@@ -77,7 +87,7 @@ CREATE TABLE IF NOT EXISTS readings_per_minute
 (
     channel    LowCardinality(String),
     minute     DateTime('UTC'),
-    readings   AggregateFunction(uniqExact, UInt64),
+    readings   AggregateFunction(uniqExact, UInt64, DateTime64(3, 'UTC')),
     value_avg  AggregateFunction(avg, Float64),
     value_min  AggregateFunction(min, Float64),
     value_max  AggregateFunction(max, Float64),
@@ -92,7 +102,7 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS readings_per_minute_mv TO readings_per_mi
 SELECT
     channel,
     toStartOfMinute(event_ts) AS minute,
-    uniqExactState(seq)       AS readings,
+    uniqExactState(seq, event_ts) AS readings,
     avgState(value)           AS value_avg,
     minState(value)           AS value_min,
     maxState(value)           AS value_max,

@@ -256,6 +256,45 @@ def channel_series(channel: str, minutes: int = 60) -> dict[str, Any]:
     }
 
 
+@app.get("/stream")
+def stream(seconds: int = 120, channels: int = 6) -> dict[str, Any]:
+    """The live chart's feed: recent values, the episodes over them, and throughput.
+
+    One endpoint rather than three because the three have to agree about *which window* they
+    describe. Fetched separately, the chart could draw a window the markers were computed for
+    a poll earlier, and an anomaly marker sitting next to the excursion it belongs to -- but
+    not on it -- is worse than no marker.
+    """
+    with _warehouse() as warehouse:
+        recent = warehouse.recent_points(seconds=max(10, min(seconds, 3600)), channels=channels)
+
+    episodes: list[dict[str, Any]] = []
+    if recent["to_ms"]:
+        with _store() as store, store._conn.cursor() as cur:
+            # Overlap, not containment: an episode that began before the window and is still
+            # running is exactly the one worth marking.
+            cur.execute(
+                "SELECT id, channel, t_start_ms, t_end_ms, onset_ms, raised_by, peak_score,"
+                " status, attributed_to FROM episodes"
+                " WHERE t_end_ms >= %s AND t_start_ms <= %s"
+                " ORDER BY t_start_ms",
+                (recent["from_ms"], recent["to_ms"]),
+            )
+            episodes = [
+                {**row, "peak_score": round(float(row["peak_score"]), 2)} for row in cur.fetchall()
+            ]
+
+    span_s = max(1.0, (recent["to_ms"] - recent["from_ms"]) / 1000.0)
+    return {
+        **recent,
+        "episodes": episodes,
+        # Over the window actually returned, not since process start: a rate that averages
+        # in an idle hour describes the hour, not the stream.
+        "readings_per_s": round(recent["readings"] / span_s, 1),
+        "window_s": round(span_s, 1),
+    }
+
+
 @app.get("/scores")
 def window_scores() -> dict[str, Any]:
     """Per-detector window-score distribution from ClickHouse.

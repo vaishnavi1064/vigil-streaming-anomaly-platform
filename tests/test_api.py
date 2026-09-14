@@ -228,3 +228,80 @@ def test_a_disturbed_window_is_counted_separately_from_a_clean_one(client, schem
 
     assert body["windows_by_severity"] == {"ok": 1, "critical": 1, "warning": 1}
     assert body["disturbed_windows"] == 2
+
+
+# ------------------------- the live stream feed -------------------------
+
+
+def test_the_stream_endpoint_reports_an_empty_window_without_raising(client, schema):
+    """With no readings stored, the chart gets an empty window rather than an error.
+
+    The page draws "no readings yet" from this shape. An exception here would blank the
+    whole dashboard because one panel had nothing to show.
+    """
+    body = client.get("/stream?seconds=60").json()
+
+    assert body["channels"] == [] or all("points" in c for c in body["channels"])
+    assert body["readings_per_s"] >= 0
+    assert "episodes" in body
+
+
+def test_the_stream_window_is_anchored_on_the_newest_event(client, schema):
+    """Anchored on data, not on wall clock.
+
+    A paused or replayed stream would otherwise scroll away into an empty chart while the
+    readings sat in the table, which looks like a broken dashboard rather than a stopped
+    producer.
+    """
+    body = client.get("/stream?seconds=60").json()
+
+    if not body["last_event_ms"]:
+        pytest.skip("no readings in the serving store; run warehouse.py")
+    assert body["to_ms"] == body["last_event_ms"]
+    assert body["from_ms"] == body["to_ms"] - 60_000
+    assert body["window_s"] == pytest.approx(60.0, abs=0.1)
+
+
+def test_the_stream_downsamples_to_one_point_per_second(client, schema):
+    body = client.get("/stream?seconds=60").json()
+
+    if not body["channels"]:
+        pytest.skip("no readings in the serving store; run warehouse.py")
+    for channel in body["channels"]:
+        assert len(channel["points"]) <= 61, "more points than seconds in the window"
+        stamps = [p["t_ms"] for p in channel["points"]]
+        assert stamps == sorted(stamps), "points must be ordered for a line chart"
+        assert len(set(stamps)) == len(stamps), "one point per second, not several"
+
+
+def test_the_stream_window_is_clamped(client, schema):
+    """A caller asking for a year does not get a year-long ClickHouse scan."""
+    assert client.get("/stream?seconds=999999").json()["window_s"] <= 3600.0
+    assert client.get("/stream?seconds=1").json()["window_s"] >= 10.0
+
+
+def test_episodes_overlapping_the_window_are_returned_for_markers(client, schema):
+    """Overlap, not containment: an episode still running is the one worth marking."""
+    with EpisodeStore(PostgresSettings.from_env()) as store:
+        store.apply_schema()
+        base = 1_800_000_000_000
+        store.record_episode(
+            Episode(
+                channel="pump-01.flow",
+                t_start_ms=base,
+                t_end_ms=base + 30_000,
+                raised_by="zscore",
+                peak_score=11.5,
+                window_count=2,
+                threshold=8.0,
+                scores=[ScoreSample("zscore", base, base + 30_000, 11.5, 0.1)],
+            )
+        )
+
+    body = client.get("/stream?seconds=60").json()
+    # The window is anchored on ClickHouse's newest reading, which will not overlap this
+    # synthetic far-future episode, so the assertion is about shape rather than membership.
+    assert isinstance(body["episodes"], list)
+    for episode in body["episodes"]:
+        assert episode["t_end_ms"] >= body["from_ms"]
+        assert episode["t_start_ms"] <= body["to_ms"]

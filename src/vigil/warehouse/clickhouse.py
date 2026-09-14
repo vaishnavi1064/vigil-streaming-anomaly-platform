@@ -8,9 +8,10 @@ a consistency problem and no query speed (ADR-045).
 
 **Dedupe is structural, not hopeful.** The readings topic is consumed at least once, so a
 replay re-delivers records this sink has already written. Both tables are
-`ReplacingMergeTree` keyed on the identity the rest of the platform already uses --
-`(channel, seq)` for readings, `(channel, detector, window_start_ms)` for scores -- so a
-replayed batch collapses instead of inflating every count derived from it. That dedupe is
+`ReplacingMergeTree` keyed on identity -- `(channel, seq, event_ts)` for readings (ADR-046:
+the producer's sequence restarts with the producer, so the pair alone is not unique across
+its lifetimes), `(channel, detector, window_start_ms)` for scores -- so a replayed batch
+collapses instead of inflating every count derived from it. That dedupe is
 *eventual*: it happens when parts merge. Anything that must be exact before a merge has
 happened reads the `readings_exact` view, which pays for `FINAL` explicitly rather than
 getting correctness by luck.
@@ -257,6 +258,64 @@ class ReadingsWarehouse:
             .named_results()
         )
         return [dict(r) for r in reversed(list(rows))]
+
+    def recent_points(self, *, seconds: int = 120, channels: int = 6) -> dict[str, Any]:
+        """Per-second values per channel over a trailing window: the live chart's feed.
+
+        Downsampled to one point per channel per second, which is the resolution a chart can
+        actually show. The raw alternative is arithmetic: 400 readings/s across 6 channels
+        over a 120-second window is 288,000 rows to move and 288,000 points to draw, for a
+        line roughly 900 pixels wide. Averaging per second gives 120 points per channel and
+        loses nothing a viewer could have seen.
+
+        The window is anchored on the newest event time in the table rather than on wall
+        clock. A replayed or paused stream would otherwise scroll away into an empty chart
+        while the data sat there, which looks like a broken dashboard rather than a stopped
+        producer -- and `last_event_ms` is returned so the page can say which it is.
+        """
+        client = self.connect()
+        newest = client.query(
+            "SELECT toUnixTimestamp64Milli(max(event_ts)) AS t FROM readings"
+        ).result_rows
+        last_event_ms = int(newest[0][0]) if newest and newest[0][0] else 0
+        if not last_event_ms:
+            return {"channels": [], "last_event_ms": 0, "from_ms": 0, "to_ms": 0, "readings": 0}
+
+        span = max(10, min(seconds, 3600))
+        from_ms = last_event_ms - span * 1000
+
+        rows = client.query(
+            """
+            SELECT channel,
+                   toUnixTimestamp64Milli(toDateTime64(toStartOfSecond(event_ts), 3)) AS t_ms,
+                   round(avg(value), 4) AS value,
+                   uniqExact(seq, event_ts) AS readings
+            FROM readings
+            WHERE event_ts >= fromUnixTimestamp64Milli({from_ms:Int64})
+            GROUP BY channel, t_ms
+            ORDER BY channel, t_ms
+            """,
+            parameters={"from_ms": from_ms},
+        ).named_results()
+
+        by_channel: dict[str, list[dict[str, Any]]] = {}
+        total = 0
+        for row in rows:
+            by_channel.setdefault(row["channel"], []).append(
+                {"t_ms": int(row["t_ms"]), "value": float(row["value"])}
+            )
+            total += int(row["readings"])
+
+        # Busiest channels first, so a fleet with more channels than the chart can show
+        # drops the quiet ones rather than an arbitrary alphabetical tail.
+        ordered = sorted(by_channel.items(), key=lambda kv: -len(kv[1]))[: max(1, channels)]
+        return {
+            "channels": [{"channel": name, "points": points} for name, points in ordered],
+            "last_event_ms": last_event_ms,
+            "from_ms": from_ms,
+            "to_ms": last_event_ms,
+            "readings": total,
+        }
 
     def detector_scores(self, *, limit: int = 200) -> list[dict[str, Any]]:
         """Per-detector score distribution, the aggregate Postgres would scan for."""
