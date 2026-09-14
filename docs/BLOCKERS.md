@@ -6,7 +6,50 @@
 
 ## Open -- needs a human
 
-### B-3. The fine-tune: task reshaped and pipeline built. **Needs a GPU run on your cluster.**
+> **Actually open: B-5 and B-6.** B-3 and B-4 are answered and are kept here in place, with
+> their resolution at the top of each entry and the reasoning that preceded it below it --
+> the history is what makes the answer checkable.
+
+### B-3. RESOLVED 2026-09-13. Trained on the Explorer cluster, and the model beat the baseline.
+
+**The answer.** `python evaluate_planner.py --adapter artifacts/planner-qlora` exits 0 only if
+the adapter's exact-match beats the generous baseline. It exited 0. On the same 300 held-out
+cases, raw result in `docs/results/planner-eval.json`:
+
+| Planner | Exact match | Proposed a forbidden action |
+|---|---|---|
+| rules, **as deployed** | 0.0% (0/300) | 0.0% |
+| rules, **given licence sets** | 20.0% (60/300) | 61.3% (184) |
+| **QLoRA Qwen2.5-7B-Instruct** | **97.7% (293/300)** | **1.0% (3)** |
+| teacher policy | 100% by construction | 0% |
+
+That closes 97.1% of the 80-point gap between the generous baseline and the teacher. The
+per-symptom breakdown, the three residual forbidden actions, the 15.8 s p50 generation cost and
+the limits this does **not** establish are in `docs/EVALUATION.md` section 6. ADR-039 records
+what had to change to run at all; ADR-040 records why the reshaped task is what made the win
+possible.
+
+**The one real setup constraint, for anyone reproducing this.** The training environment needs
+**Python 3.12 with torch 2.5.1+cu121**. That pin is not cosmetic: bitsandbytes' 4-bit kernels
+and the triton build they depend on are what break outside it, and they break at import or at
+the first quantised matmul rather than at install time, so a mismatched environment looks fine
+until the GPU allocation has already been spent. The full working set, pinned in
+`run_planner_fast.sbatch`: torch 2.5.1, transformers 4.46.3, peft 0.13.2, trl 0.12.0,
+bitsandbytes 0.45.0.
+
+**Two deviations from the spec below, both deliberate and both recorded in ADR-039.** The run
+used **fp16, not bf16** -- the available card was a V100 and Volta has no native bf16 -- and
+**one epoch (75 steps), not three (225)**. The bf16 caution further down stands as a correct
+prior warning; it happened not to bite, with no NaN in any of the 75 logged steps.
+
+**What is left is deployment, not training.** The adapter is not wired into
+`RemediationAgent`, which still plans with the deterministic rules, so D-6 is not yet reversed
+and every other plan-derived number in this repository is still the rules'.
+
+---
+
+**The history below is kept as written.** It is what the blocker said before the run, and the
+reasoning that produced the task the model was measured on.
 
 **Answered 2026-09-07 by reshaping the task (option 2), not by dropping it.** The original
 objection stands and is preserved below; what changed is the task, not the verdict on the old
@@ -61,6 +104,8 @@ Qwen2.5 tokenizer: prompts p50 **1,136** tokens, max **1,261**; completions p50 
 batch of 16.
 
 **Nothing here has been trained.** No number in this repository comes from an adapter.
+*(True when written on 2026-09-07. Superseded by the run at the top of this entry: the
+numbers in `docs/EVALUATION.md` section 6 come from an adapter, and say so.)*
 
 ### The exact run, for your cluster
 
@@ -101,9 +146,10 @@ If bf16 is unavailable, pass `--max-seq-length 1536` and expect fp16 instability
 the loss is dominated by a few confident tokens and fp16's narrower exponent range is where
 silent NaNs come from.
 
-**What to report back.** The output of step 4 is enough: it prints both baselines, the
-adapter's score, the per-symptom breakdown and the exact-match delta. If the delta is
-negative, that is the finding and it goes in `docs/EVALUATION.md` next to the rest.
+**What was reported back.** Step 4's output, in full, as `docs/EVALUATION.md` section 6 --
+both baselines, the adapter's score, the per-symptom breakdown and the exact-match delta.
+The delta was positive; had it been negative that would have been the finding and it would
+have gone in the same place.
 
 ### B-4. Reopened and re-answered by v4. The root cause was distributed-systems, not statistical. NFR-8 still not met.
 
@@ -276,3 +322,4 @@ Recorded here rather than only in the docs that would flatter themselves by omit
 | R-2 | Whether Flink could run at all on this machine | It runs. Job submitted, 1,056 windows scored, output bit-identical to the Python detector, 30 checkpoints completed at an average of 283 ms |
 | R-3 | B-1, how to serve the VLM | Answered 2026-09-06: hosted endpoint behind env vars |
 | R-4 | B-2, whether to attempt QLoRA | Answered 2026-09-06: a GPU will be rented, so it proceeds as planned |
+| R-5 | B-3, the GPU run the fine-tune needed | Ran 2026-09-13 on Northeastern Explorer (V100-SXM2-32GB), not rented hardware. The adapter beat both baselines -- 97.7% exact-match against 20.0% and 0.0%, forbidden actions 1.0% against 61.3%. Setup constraint recorded: Python 3.12 + torch 2.5.1+cu121 for bitsandbytes/triton |
