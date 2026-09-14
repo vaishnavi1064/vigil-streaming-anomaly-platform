@@ -1,0 +1,128 @@
+# The agent, deployed as the thing it actually is.
+#
+# There is no long-running agent service in this repository, and this file does not invent
+# one. `RemediationAgent` is a library called by `demo.py` and by `agent_quality.py`; the
+# detector does not run it, and nothing exposes it over a port. Writing a Deployment for an
+# agent daemon would mean writing the daemon first, which is building a new component under
+# the heading of deploying an existing one.
+#
+# What does exist is the quality gate: a real entry point that constructs the agent over 400
+# episodes and measures grounding, gate approval, sandbox containment and abstention as rates,
+# failing on a broken floor or on drift below a committed baseline (ADR-032). As a CronJob it
+# is the in-cluster version of what CI runs, which is a genuinely useful thing to deploy.
+#
+# Note the schedule is deliberately not "every minute". This reads 400 episodes and the
+# result changes when the agent or the runbooks change, not between two ticks of a clock.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: agent-quality
+  namespace: vigil
+  labels:
+    app.kubernetes.io/name: agent-quality
+    app.kubernetes.io/part-of: vigil
+spec:
+  # Daily, at a quiet hour.
+  schedule: "17 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 3600
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: agent-quality
+            app.kubernetes.io/part-of: vigil
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+          containers:
+            - name: agent-quality
+              image: vigil:0.1.0
+              imagePullPolicy: IfNotPresent
+              command: ["python", "agent_quality.py"]
+              envFrom:
+                - configMapRef:
+                    name: vigil-config
+                - secretRef:
+                    name: vigil-secrets
+              resources:
+                requests:
+                  cpu: 250m
+                  memory: 512Mi
+                limits:
+                  cpu: 2000m
+                  memory: 1Gi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir: {}
+---
+# The synthetic source. Optional, and off by default in kustomization.yaml: on a cluster fed
+# by the MQTT bridge or by a real producer this would be writing fake readings into the same
+# topic as the real ones, which is a way to corrupt an evaluation rather than to run a demo.
+#
+# Apply deliberately:  kubectl apply -f k8s/40-agent-quality-job.yaml  (this whole file)
+# then scale it down when the demo is over:  kubectl -n vigil scale deploy/loadgen --replicas=0
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen
+  namespace: vigil
+  labels:
+    app.kubernetes.io/name: loadgen
+    app.kubernetes.io/part-of: vigil
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: loadgen
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: loadgen
+        app.kubernetes.io/part-of: vigil
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: loadgen
+          image: vigil:0.1.0
+          imagePullPolicy: IfNotPresent
+          command: ["python", "loadgen.py", "--rate", "400", "--duration", "0", "--channels", "6"]
+          envFrom:
+            - configMapRef:
+                name: vigil-config
+            - secretRef:
+                name: vigil-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 1000m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

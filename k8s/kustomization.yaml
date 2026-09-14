@@ -1,0 +1,36 @@
+# The default apply set. Deliberately excludes three things:
+#
+#   02-secret.template.yaml  -- a template of placeholders. Applying it would give the cluster
+#                               the literal string REPLACE_ME as its database password.
+#                               Create the real Secret out-of-band; the template says how.
+#   30-flink.yaml            -- needs an image built from flink/Dockerfile that is published
+#                               nowhere, and wants ~2.5 GB on top of everything else.
+#   40-agent-quality-job.yaml -- the CronJob is useful but not load-bearing, and the loadgen
+#                               Deployment in the same file writes synthetic readings into
+#                               the real topic, which is a way to corrupt an evaluation.
+#
+# Each is a `kubectl apply -f` away, and docs/DEPLOYMENT.md says when to reach for them.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: vigil
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: vigil
+      app.kubernetes.io/managed-by: kustomize
+
+resources:
+  - 00-namespace.yaml
+  - 01-config.yaml
+  - 10-postgres.yaml
+  - 11-kafka.yaml
+  - 12-clickhouse.yaml
+  - 13-minio.yaml
+  - 20-api.yaml
+  - 21-consumers.yaml
+
+images:
+  - name: vigil
+    newTag: 0.1.0

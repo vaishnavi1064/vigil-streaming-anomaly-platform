@@ -1,0 +1,146 @@
+# ClickHouse: the serving store for readings and window scores (ADR-045).
+#
+# The limits.xml here is the same file compose mounts. It is in a ConfigMap rather than baked
+# into an image so that the one thing likely to need tuning per environment -- how much memory
+# ClickHouse believes it has -- can be changed without a rebuild.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickhouse-limits
+  namespace: vigil
+  labels:
+    app.kubernetes.io/name: clickhouse
+    app.kubernetes.io/part-of: vigil
+data:
+  limits.xml: |
+    <!-- ClickHouse defaults assume a server, not a 1 GB slice. These caps make it fail a
+         query rather than the container, which is the failure mode that leaves the rest of
+         the stack running.
+
+         background_pool_size is deliberately NOT set: ClickHouse refuses to start if
+         pool_size * concurrency_ratio drops below
+         number_of_free_entries_in_pool_to_execute_mutation (20 by default), and the stock
+         pool already satisfies that. Memory is the constraint here, not merge concurrency. -->
+    <clickhouse>
+        <max_server_memory_usage>805306368</max_server_memory_usage>
+        <mark_cache_size>268435456</mark_cache_size>
+        <uncompressed_cache_size>0</uncompressed_cache_size>
+        <max_concurrent_queries>32</max_concurrent_queries>
+        <logger>
+            <level>warning</level>
+        </logger>
+    </clickhouse>
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse
+  namespace: vigil
+  labels:
+    app.kubernetes.io/name: clickhouse
+    app.kubernetes.io/part-of: vigil
+spec:
+  selector:
+    app.kubernetes.io/name: clickhouse
+  ports:
+    - name: http
+      port: 8123
+      targetPort: 8123
+    - name: native
+      port: 9000
+      targetPort: 9000
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: clickhouse
+  namespace: vigil
+  labels:
+    app.kubernetes.io/name: clickhouse
+    app.kubernetes.io/part-of: vigil
+spec:
+  serviceName: clickhouse
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: clickhouse
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: clickhouse
+        app.kubernetes.io/part-of: vigil
+    spec:
+      containers:
+        - name: clickhouse
+          image: clickhouse/clickhouse-server:24.8-alpine
+          ports:
+            - name: http
+              containerPort: 8123
+            - name: native
+              containerPort: 9000
+          env:
+            - name: CLICKHOUSE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: vigil-secrets
+                  key: CLICKHOUSE_USER
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: vigil-secrets
+                  key: CLICKHOUSE_PASSWORD
+            - name: CLICKHOUSE_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: vigil-config
+                  key: CLICKHOUSE_DB
+            # Without this the default user stays passwordless from any host, which makes
+            # the password above decorative.
+            - name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT
+              value: "1"
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 2000m
+              memory: 1Gi
+          # httpGet, not the wget-in-a-shell that compose uses. The kubelet probes the pod IP
+          # directly, so the IPv6-vs-localhost trap that broke the compose healthcheck -- the
+          # VM has IPv6 disabled, ClickHouse skips the :: bind, and `localhost` resolves to
+          # ::1 first -- does not arise here.
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 20
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/clickhouse
+            - name: limits
+              mountPath: /etc/clickhouse-server/config.d/limits.xml
+              subPath: limits.xml
+              readOnly: true
+      volumes:
+        - name: limits
+          configMap:
+            name: clickhouse-limits
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi

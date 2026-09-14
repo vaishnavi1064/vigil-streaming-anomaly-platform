@@ -1,0 +1,246 @@
+# The four consumer workloads: detector, reconciler, and the two storage sinks.
+#
+# ---------------------------------------------------------------------------------------
+# ON PROBES, because their absence here is deliberate and would otherwise look like an
+# oversight.
+#
+# None of these four serves HTTP. A **readiness** probe would be meaningless: readiness gates
+# Service endpoints and nothing routes traffic to a consumer, so the value would be read by
+# nobody. A **liveness** probe is the tempting one, and the honest options are all bad:
+#
+#   * `exec: ["true"]` or a pgrep on PID 1 -- always passes while the container is up, which
+#     is a condition the kubelet already knows. Decoration.
+#   * Probing Kafka reachability -- restarts the consumer when the *broker* is down, which is
+#     precisely when a consumer should sit and retry rather than thrash.
+#   * A heartbeat file touched by the poll loop, checked with `test -newermt` -- the only one
+#     that detects a genuinely wedged consumer. It needs the application to write that file,
+#     which is real work in the consumer loops and is not done.
+#
+# So these have no probes, and the liveness signal is the one Kubernetes gets for free: the
+# process exits, the container dies, the pod restarts. The heartbeat option is the honest
+# upgrade path and is recorded in docs/DEPLOYMENT.md rather than faked here.
+#
+# Each runs a single replica. The detector, reconciler and ClickHouse sink use Kafka consumer
+# groups and could scale horizontally, but docs/SCALE.md measured the plateau at 3 consumers
+# and NFR-5's near-linear claim was not met, so a replica count above 1 would be a number
+# chosen for looks. The lake sink *cannot* scale past one: it manages its own partition
+# assignment because its offsets live in the Iceberg snapshot (ADR-044).
+# ---------------------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: detector
+  namespace: vigil
+  labels:
+    app.kubernetes.io/name: detector
+    app.kubernetes.io/part-of: vigil
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: detector
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: detector
+        app.kubernetes.io/part-of: vigil
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: detector
+          image: vigil:0.1.0
+          imagePullPolicy: IfNotPresent
+          # The z-score baseline, not the foundation model: the image deliberately omits
+          # torch (see Dockerfile), and the hot path runs the baseline anyway (ADR-017).
+          command: ["python", "detector.py", "--conditioning"]
+          envFrom:
+            - configMapRef:
+                name: vigil-config
+            - secretRef:
+                name: vigil-secrets
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 2000m
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reconciler
+  namespace: vigil
+  labels:
+    app.kubernetes.io/name: reconciler
+    app.kubernetes.io/part-of: vigil
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: reconciler
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: reconciler
+        app.kubernetes.io/part-of: vigil
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: reconciler
+          image: vigil:0.1.0
+          imagePullPolicy: IfNotPresent
+          # Its own consumer group, deliberately: sharing the detector's offsets would mean
+          # only ever auditing what the detector already managed to read, which is the thing
+          # under audit.
+          command: ["python", "reconciler.py", "--report-interval", "60"]
+          envFrom:
+            - configMapRef:
+                name: vigil-config
+            - secretRef:
+                name: vigil-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: warehouse-sink
+  namespace: vigil
+  labels:
+    app.kubernetes.io/name: warehouse-sink
+    app.kubernetes.io/part-of: vigil
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: warehouse-sink
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: warehouse-sink
+        app.kubernetes.io/part-of: vigil
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: warehouse-sink
+          image: vigil:0.1.0
+          imagePullPolicy: IfNotPresent
+          # --no-scores: the scores topic is written by the Flink job, which is optional
+          # here. Drop the flag when the Flink workloads are applied.
+          command: ["python", "warehouse.py", "--no-scores"]
+          envFrom:
+            - configMapRef:
+                name: vigil-config
+            - secretRef:
+                name: vigil-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lake-sink
+  namespace: vigil
+  labels:
+    app.kubernetes.io/name: lake-sink
+    app.kubernetes.io/part-of: vigil
+spec:
+  # Exactly one, and not a tuning choice. This sink seeks to the offsets recorded in the
+  # current Iceberg snapshot and manages its own partition assignment (ADR-044); a second
+  # replica would assign itself the same partitions and both would write the same rows.
+  replicas: 1
+  strategy:
+    # Recreate, not RollingUpdate, for the same reason: two of these must never overlap.
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: lake-sink
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lake-sink
+        app.kubernetes.io/part-of: vigil
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: lake-sink
+          image: vigil:0.1.0
+          imagePullPolicy: IfNotPresent
+          command: ["python", "lake.py"]
+          envFrom:
+            - configMapRef:
+                name: vigil-config
+            - secretRef:
+                name: vigil-secrets
+          resources:
+            # More memory than the others: pyarrow buffers a whole batch before writing a
+            # Parquet file, and the default batch is 10,000 readings.
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

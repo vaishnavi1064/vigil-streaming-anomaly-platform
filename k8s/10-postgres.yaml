@@ -1,0 +1,117 @@
+# Postgres: episodes, application state, and the Iceberg catalog (ADR-043).
+#
+# A StatefulSet rather than a Deployment because it owns a volume whose identity matters: a
+# rescheduled pod must reattach the same data, and a ReplicaSet gives no such promise. One
+# replica -- this is single-node by design, and raising the count would claim an HA story
+# nothing here implements.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: vigil
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: vigil
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: vigil
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: vigil
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/part-of: vigil
+    spec:
+      securityContext:
+        fsGroup: 999
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: vigil-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: vigil-secrets
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: vigil-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_INITDB_ARGS
+              value: "--data-checksums"
+            # A subdirectory, not the volume root: initdb refuses a directory containing
+            # lost+found, which is exactly what a fresh PersistentVolume hands over.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          args:
+            - postgres
+            - -c
+            - shared_buffers=256MB
+            - -c
+            - max_connections=60
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

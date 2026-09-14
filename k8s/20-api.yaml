@@ -1,0 +1,103 @@
+# The dashboard API. The only workload here that serves traffic, and the only one with a
+# readiness probe that means anything -- readiness gates Service endpoints, and nothing routes
+# to a consumer.
+#
+# Two replicas because it is stateless and a rollout should not blank the dashboard. The
+# stores behind it are single-replica, so this is availability of the read path only, and it
+# is not an HA claim about the platform.
+apiVersion: v1
+kind: Service
+metadata:
+  name: vigil-api
+  namespace: vigil
+  labels:
+    app.kubernetes.io/name: vigil-api
+    app.kubernetes.io/part-of: vigil
+spec:
+  selector:
+    app.kubernetes.io/name: vigil-api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vigil-api
+  namespace: vigil
+  labels:
+    app.kubernetes.io/name: vigil-api
+    app.kubernetes.io/part-of: vigil
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vigil-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vigil-api
+        app.kubernetes.io/part-of: vigil
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: /metrics
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: api
+          image: vigil:0.1.0
+          # IfNotPresent so a `kind load docker-image` works without a registry. Change to
+          # Always once the image is pushed somewhere and the tag is mutable.
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "uvicorn", "vigil.api:app", "--host", "0.0.0.0", "--port", "8000"]
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: vigil-config
+            - secretRef:
+                name: vigil-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+          # /health answers whether this process is serving, and reports each store
+          # separately in its body. It deliberately returns 200 even when a store is down:
+          # a degraded dashboard is better than no dashboard, and tying readiness to
+          # ClickHouse would take the whole API out when only the serving panels are broken.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        # readOnlyRootFilesystem needs somewhere writable for matplotlib and any temp file.
+        - name: tmp
+          emptyDir: {}

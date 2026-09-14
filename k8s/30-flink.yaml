@@ -1,0 +1,188 @@
+# Flink: the exactly-once window-scoring job (ADR-005, ADR-022).
+#
+# In its own file and NOT in kustomization.yaml's default resource list, mirroring the compose
+# profile. Two reasons, and the second is the real one:
+#
+#   1. JobManager plus TaskManager want roughly 2.5 GB, which the reference laptop cannot add
+#      on top of Kafka, Postgres, ClickHouse and MinIO.
+#   2. The image is built from flink/Dockerfile and is not published anywhere. Listing it as a
+#      default resource would make `kubectl apply -k k8s/` fail on an ImagePullBackOff for
+#      everyone who had not built it first, which is a worse default than leaving it out.
+#
+# Apply deliberately:  kubectl apply -f k8s/30-flink.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: flink-jobmanager
+  namespace: vigil
+  labels:
+    app.kubernetes.io/name: flink-jobmanager
+    app.kubernetes.io/part-of: vigil
+spec:
+  selector:
+    app.kubernetes.io/name: flink-jobmanager
+  ports:
+    - name: rpc
+      port: 6123
+      targetPort: 6123
+    - name: blob
+      port: 6124
+      targetPort: 6124
+    - name: ui
+      port: 8081
+      targetPort: 8081
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flink-jobmanager
+  namespace: vigil
+  labels:
+    app.kubernetes.io/name: flink-jobmanager
+    app.kubernetes.io/part-of: vigil
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: flink-jobmanager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: flink-jobmanager
+        app.kubernetes.io/part-of: vigil
+    spec:
+      containers:
+        - name: jobmanager
+          image: vigil/flink:1.20.1-py
+          imagePullPolicy: IfNotPresent
+          args: ["jobmanager"]
+          ports:
+            - name: rpc
+              containerPort: 6123
+            - name: blob
+              containerPort: 6124
+            - name: ui
+              containerPort: 8081
+          env:
+            - name: FLINK_PROPERTIES
+              value: |
+                jobmanager.rpc.address: flink-jobmanager
+                jobmanager.memory.process.size: 1024m
+                state.backend.type: rocksdb
+                state.backend.incremental: true
+                execution.checkpointing.dir: file:///flink-checkpoints
+                execution.checkpointing.savepoint-dir: file:///flink-savepoints
+            - name: KAFKA_BOOTSTRAP_INTERNAL
+              valueFrom:
+                configMapKeyRef:
+                  name: vigil-config
+                  key: KAFKA_BOOTSTRAP
+            - name: READINGS_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: vigil-config
+                  key: READINGS_TOPIC
+            - name: SCORES_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: vigil-config
+                  key: SCORES_TOPIC
+          resources:
+            requests:
+              cpu: 200m
+              memory: 1Gi
+            limits:
+              cpu: 1000m
+              memory: 1536Mi
+          # The chaos suite learned that Flink's heartbeat timeout means a dead job keeps
+          # reporting healthy for ~50 s, so /overview answering is necessary and not
+          # sufficient. It is the right probe for "the JobManager process is serving"; it is
+          # not evidence the job is running, and the parity harness is what checks that.
+          readinessProbe:
+            httpGet:
+              path: /overview
+              port: ui
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /overview
+              port: ui
+            initialDelaySeconds: 90
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 6
+          volumeMounts:
+            - name: checkpoints
+              mountPath: /flink-checkpoints
+            - name: savepoints
+              mountPath: /flink-savepoints
+      volumes:
+        # emptyDir, and this is a real limitation: checkpoints do not survive the pod. It is
+        # enough to exercise the exactly-once path within a pod lifetime, which is what the
+        # chaos suite tested (a TaskManager kill, JobManager surviving). Surviving a
+        # JobManager loss needs a PersistentVolume both roles can share, or object storage --
+        # the MinIO above would do, and that is the upgrade, not a rewrite.
+        - name: checkpoints
+          emptyDir: {}
+        - name: savepoints
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flink-taskmanager
+  namespace: vigil
+  labels:
+    app.kubernetes.io/name: flink-taskmanager
+    app.kubernetes.io/part-of: vigil
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: flink-taskmanager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: flink-taskmanager
+        app.kubernetes.io/part-of: vigil
+    spec:
+      containers:
+        - name: taskmanager
+          image: vigil/flink:1.20.1-py
+          imagePullPolicy: IfNotPresent
+          args: ["taskmanager"]
+          env:
+            - name: FLINK_PROPERTIES
+              value: |
+                jobmanager.rpc.address: flink-jobmanager
+                taskmanager.memory.process.size: 2048m
+                taskmanager.numberOfTaskSlots: 4
+                state.backend.type: rocksdb
+                state.backend.incremental: true
+                execution.checkpointing.dir: file:///flink-checkpoints
+                execution.checkpointing.savepoint-dir: file:///flink-savepoints
+            - name: KAFKA_BOOTSTRAP_INTERNAL
+              valueFrom:
+                configMapKeyRef:
+                  name: vigil-config
+                  key: KAFKA_BOOTSTRAP
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              cpu: 2000m
+              memory: 2560Mi
+          volumeMounts:
+            - name: checkpoints
+              mountPath: /flink-checkpoints
+            - name: savepoints
+              mountPath: /flink-savepoints
+      volumes:
+        - name: checkpoints
+          emptyDir: {}
+        - name: savepoints
+          emptyDir: {}

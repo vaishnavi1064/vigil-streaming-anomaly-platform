@@ -1,0 +1,38 @@
+# Non-secret configuration. Everything here is a hostname, a topic name or a tuning number --
+# the same values .env carries for compose, pointed at in-cluster DNS instead of localhost.
+#
+# Credentials are deliberately absent: they live in the Secret, which this repository ships
+# only as a template (02-secret.template.yaml).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vigil-config
+  namespace: vigil
+  labels:
+    app.kubernetes.io/part-of: vigil
+data:
+  # Kafka. In-cluster clients use the headless service; there is no host-facing listener here,
+  # which is the one real difference from the compose topology.
+  KAFKA_BOOTSTRAP: "kafka-0.kafka.vigil.svc.cluster.local:9092"
+  READINGS_TOPIC: "sensor.readings"
+  READINGS_PARTITIONS: "6"
+  CONTEXT_TOPIC: "ops.context"
+  SCORES_TOPIC: "sensor.window_scores"
+
+  POSTGRES_HOST: "postgres.vigil.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "vigil"
+
+  CLICKHOUSE_HOST: "clickhouse.vigil.svc.cluster.local"
+  CLICKHOUSE_HTTP_PORT: "8123"
+  CLICKHOUSE_DB: "vigil"
+
+  # The Iceberg lake. The catalog is a JDBC catalog in the Postgres above (ADR-043), so
+  # there is no catalog service to name here -- only the object store holding the data files.
+  LAKE_S3_ENDPOINT: "http://minio.vigil.svc.cluster.local:9000"
+  LAKE_BUCKET: "vigil-lake"
+  LAKE_NAMESPACE: "vigil"
+
+  MQTT_HOST: "mqtt.tdengine.com"
+  MQTT_PORT: "1883"
+  MQTT_TOPIC: "inverters"

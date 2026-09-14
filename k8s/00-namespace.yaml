@@ -1,0 +1,9 @@
+# Everything lands in one namespace. A namespace per tier would be defensible at a size this
+# platform is not: nine workloads that all talk to each other gain nothing from a boundary
+# they would all have to be granted permission to cross.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vigil
+  labels:
+    app.kubernetes.io/part-of: vigil

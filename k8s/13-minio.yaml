@@ -1,0 +1,158 @@
+# MinIO: object storage for the Iceberg warehouse.
+#
+# quay.io, not Docker Hub. MinIO's Docker Hub repositories now 404 for anonymous pulls,
+# including `latest`; quay.io is upstream's own registry and still serves them. Found by a
+# failed `docker compose up`, not by reading a changelog.
+#
+# The Iceberg catalog is not here -- it is a JDBC catalog in Postgres (ADR-043), which is why
+# this stack has no third storage service.
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: vigil
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/part-of: vigil
+spec:
+  selector:
+    app.kubernetes.io/name: minio
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: 9000
+    - name: console
+      port: 9001
+      targetPort: 9001
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio
+  namespace: vigil
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/part-of: vigil
+spec:
+  serviceName: minio
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: minio
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: minio
+        app.kubernetes.io/part-of: vigil
+    spec:
+      containers:
+        - name: minio
+          image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z.hotfix.7aa24e772
+          args: ["server", "/data", "--console-address", ":9001"]
+          ports:
+            - name: s3
+              containerPort: 9000
+            - name: console
+              containerPort: 9001
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: vigil-secrets
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: vigil-secrets
+                  key: MINIO_ROOT_PASSWORD
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: s3
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 20
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: s3
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi
+---
+# Bucket creation, once per cluster. Idempotent.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-bucket
+  namespace: vigil
+  labels:
+    app.kubernetes.io/name: minio-bucket
+    app.kubernetes.io/part-of: vigil
+spec:
+  backoffLimit: 10
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: minio-bucket
+        app.kubernetes.io/part-of: vigil
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: vigil-secrets
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: vigil-secrets
+                  key: MINIO_ROOT_PASSWORD
+            - name: LAKE_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: vigil-config
+                  key: LAKE_BUCKET
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              until mc alias set lake http://minio.vigil.svc.cluster.local:9000 \
+                    "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; do
+                echo "waiting for minio"
+                sleep 5
+              done
+              mc mb --ignore-existing "lake/$LAKE_BUCKET"
+              mc ls lake
