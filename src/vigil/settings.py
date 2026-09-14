@@ -140,3 +140,33 @@ class VlmSettings:
             model=os.environ.get("VLM_MODEL", "").strip(),
             timeout_s=float(os.environ.get("VLM_TIMEOUT_S", "20").strip() or 20),
         )
+
+
+@dataclass(frozen=True)
+class ClaudeVisionSettings:
+    """Claude as the chart reader, keyed on `ANTHROPIC_API_KEY` and nothing else.
+
+    Optional for the same reason `VlmSettings` is: a missing key must cost an explanation,
+    never a pipeline. The key is read from the environment only -- there is no constructor
+    default, no file path, and no fallback to an SDK credential chain, so "is this configured"
+    has one answer and a key cannot arrive from somewhere nobody documented.
+    """
+
+    api_key: str
+    model: str = "claude-sonnet-5"
+    timeout_s: float = 20.0
+    max_tokens: int = 400
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.api_key)
+
+    @classmethod
+    def from_env(cls) -> ClaudeVisionSettings:
+        load_env()
+        return cls(
+            api_key=os.environ.get("ANTHROPIC_API_KEY", "").strip(),
+            model=os.environ.get("VLM_CLAUDE_MODEL", "").strip() or "claude-sonnet-5",
+            timeout_s=float(os.environ.get("VLM_TIMEOUT_S", "20").strip() or 20),
+            max_tokens=int(os.environ.get("VLM_MAX_TOKENS", "400").strip() or 400),
+        )

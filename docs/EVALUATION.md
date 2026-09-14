@@ -1110,7 +1110,104 @@ a served adapter is made here, because none has been measured.
 
 ---
 
-## 7. Honesty rules held in this document
+## 7. The VLM explainer: the local cost measured, the model cost not
+
+Not a Q. There is no head-to-head here and no target being tested - this section reports what
+a component costs and states, precisely, which half of that cost has been measured. It is in
+this file rather than in `ARCHITECTURE.md` because the unmeasured half is a number a reader
+will otherwise assume.
+
+**What fires, and when.** The explainer renders a flagged window to a chart and asks a
+vision-language model to read it (ADR-004, the VLM4TS screen-then-verify pattern). It runs on
+episodes, never on windows, and not even on all episodes: an episode the conditioning policy
+attributed to a deploy or a pipeline fault has already been explained by the context event, so
+paying for a picture of one would be paying to explain the same thing twice. Only episodes
+that would page a human are sent.
+
+### 7.1 How rare the rare path actually is
+
+Taken from the v4w run (`docs/results/paired-evaluation-v4w-topology-wide.json`) rather than
+asserted: 900 s at 24 channels, 30 s windows sliding by 10 s, so 88 windows per channel and
+**2,112 window scorings**. That run raised 147 episodes, of which 6 were attributed, leaving
+**141 explanations** -- one API call per 15 window scorings, or 6.7%.
+
+That ratio is the design working, and it is also the reason the ratio is not a general claim:
+it is the density of *this* scenario, which schedules faults adversarially and is deliberately
+harder than a real fleet (G-8). A quieter stream sends fewer.
+
+### 7.2 Measured: the render, on the reference laptop
+
+The half the platform owns. 30 repetitions per row after a warm-up, matplotlib Agg backend,
+900x380 px at 100 dpi.
+
+| Window plotted | Render p50 | Render p95 | PNG | Base64 on the wire |
+|---|---|---|---|---|
+| 120 samples | **54.0 ms** | 57.0 ms | 28.0 KB | 37.3 KB |
+| 300 samples | **54.6 ms** | 112.9 ms | 31.9 KB | 42.6 KB |
+
+Render cost is essentially flat in the number of samples over this range -- it is figure setup,
+not plotting -- and the p95 at 300 samples is a garbage-collection artifact of the measurement
+loop rather than a property of the size.
+
+This runs on the explainer's own worker thread behind a bounded queue, so it is not on the hot
+path and does not enter the 250 ms budget in section 5.2.
+
+### 7.3 Not measured: the model call
+
+**There is no `ANTHROPIC_API_KEY` in this environment, and no VLM endpoint key either.** The
+Claude backend (ADR-041) is built, wired and tested, and it has never been run against
+Anthropic. That means the following are **unmeasured**, not estimated:
+
+- **NFR-2's 5 s explanation budget.** Unverified since B-1 and still unverified. What is known
+  is that 54 ms of it is rendering and the rest is a network round trip to a model.
+- **Token cost per explanation.** The output is capped at 400 tokens; the input is a ~28-32 KB
+  PNG plus six lines of text, and what that comes to in image tokens has not been counted.
+- **Whether the explanations are any good.** This is the older and larger gap (C-2). Judging
+  explanation quality needs a judge - Ragas/DeepEval against a key - and a model reading its
+  own colleague's chart description is not an evaluation.
+
+To produce all three, set `ANTHROPIC_API_KEY` and run the detector on any scenario that raises
+an episode; the explainer's counters print requested / explained / failed and a mean latency in
+the run summary.
+
+### 7.4 What the tests prove, and what they cannot
+
+40 tests across `tests/test_explain.py` and `tests/test_claude_explainer.py`. **None of them
+call Anthropic.** The Claude success path runs against an injected stub client and the
+endpoint path against a local fake HTTP server, because a suite that spends money on every run
+is a suite nobody runs, and because CI has no key either.
+
+What that does establish: the request shape the SDK is handed (image block first, episode
+numbers beside it, no sampling parameters -- current Sonnet rejects `temperature` with a 400),
+the parse across multiple text blocks, the counters, and that every failure mode is a recorded
+absence rather than an exception. A refusal, an empty answer, a transport error, a chart that
+will not draw, and a missing key each have a test asserting detection is unaffected and the
+episode carries a stated reason rather than invented prose.
+
+What it cannot establish is everything in 7.3. A stub returns what the test told it to; it is
+evidence about this code and none at all about the model.
+
+### 7.5 What the explanation is allowed to do to the agent
+
+Nothing, deliberately (ADR-042). The explanation is carried into `Diagnosis.evidence` as
+`vlm_explanation`, where the trace and the operator see it. It does not touch the symptom or
+the retrieval query, so no sentence a model wrote can change which runbook is found and
+therefore which actions are licensed. A test feeds the diagnoser a deliberately misleading
+explanation -- "certainly a safety interlock failure requiring immediate shutdown" -- and
+asserts the symptom, query and summary come out byte-identical to the same episode with no
+explanation at all.
+
+This is the weakest of the three readings of the plan's "grounded evidence", and it is chosen
+for a specific reason: section 6.3 established that the safety gate checks blast radius and
+action class but **not** appropriateness to the symptom. Letting free text steer the symptom
+would aim squarely at the one hole the gate does not cover. The consequence is that the
+explainer currently helps the human and not the agent, which is a real limitation and not a
+step on the way to something -- making it help the agent is a new decision needing its own
+measurement.
+
+---
+
+## 8. Honesty rules held in this document
 
 - Every number states the hardware and the command that produced it.
 - A target that is missed is reported as missed, not quietly re-scoped afterwards. Revisions to

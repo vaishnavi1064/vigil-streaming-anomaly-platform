@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from vigil.episodes import Episode
-from vigil.explain.explainer import Explanation, VlmExplainer, explain_episode
+from vigil.explain.explainer import Explanation, WindowExplainer, explain_episode
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class ExplanationWorker:
 
     def __init__(
         self,
-        explainer: VlmExplainer,
+        explainer: WindowExplainer,
         on_explained: Callable[[int, Explanation], None],
         *,
         max_pending: int = 32,

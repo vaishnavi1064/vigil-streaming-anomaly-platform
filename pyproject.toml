@@ -21,10 +21,11 @@ foundation = [
     "chronos-forecasting>=1.5",
 ]
 explain = [
-    # The VLM explainer renders a flagged window as a plot and sends it to a hosted
-    # endpoint (ADR-004, B-1). Nothing here loads a model locally.
+    # The VLM explainer renders a flagged window as a plot and sends it to a hosted model
+    # (ADR-004, B-1, ADR-041). Nothing here loads a model locally.
     "matplotlib>=3.9",
     "httpx>=0.27",
+    "anthropic>=0.40",
 ]
 train = [
     # The QLoRA fine-tune of the tool-calling planner (B-3). Installed on the GPU host only:

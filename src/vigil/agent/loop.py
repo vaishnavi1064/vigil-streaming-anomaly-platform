@@ -60,13 +60,31 @@ class Diagnosis:
     evidence: dict[str, object] = field(default_factory=dict)
 
 
+def _explanation_evidence(episode: Episode) -> dict[str, object]:
+    """The VLM's account of the window, carried as evidence and nothing else (ADR-042).
+
+    The explanation reaches the diagnosis, the trace and the operator. It does not reach the
+    symptom or the retrieval query, so no sentence a model wrote can change which runbook is
+    found and therefore which actions are licensed. That is the whole of the restriction: the
+    plan asks for the explanation to be grounded input to the diagnoser, and this is the
+    reading of "grounded" that leaves the licence chain intact.
+    """
+    if not episode.explanation:
+        return {}
+    return {"vlm_explanation": episode.explanation}
+
+
 class Diagnoser:
     """Characterises an episode from the evidence already attached to it.
 
     Reads only what the platform recorded -- the detector's per-window scores, the episode's
-    shape, the channel's name. It does not fetch anything, because a diagnoser that could
-    reach out would need gating too, and the gate exists precisely so that only one component
-    needs to be trusted.
+    shape, the channel's name, and the explanation the VLM worker attached if it ran. It does
+    not fetch anything, because a diagnoser that could reach out would need gating too, and
+    the gate exists precisely so that only one component needs to be trusted.
+
+    The symptom and the query are derived from the detector's numbers alone. An explanation
+    that is absent, late or wrong therefore changes the record an operator reads and changes
+    nothing the agent does.
     """
 
     def diagnose(self, episode: Episode) -> Diagnosis:
@@ -79,7 +97,7 @@ class Diagnoser:
                 channel=channel,
                 summary=f"excursion on safety-related channel {channel}",
                 query=f"excursion on a safety instrument {channel} escalate",
-                evidence={"peak_score": episode.peak_score},
+                evidence={"peak_score": episode.peak_score, **_explanation_evidence(episode)},
             )
 
         windows = episode.window_count
@@ -115,6 +133,7 @@ class Diagnoser:
                 "windows": windows,
                 "duration_s": round(duration_s, 1),
                 "dispersion_dominant": dispersion,
+                **_explanation_evidence(episode),
             },
         )
 

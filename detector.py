@@ -40,9 +40,9 @@ from vigil.detectors.foundation import ChronosResidualDetector, FoundationModelU
 from vigil.detectors.offpath import OffPathScorer
 from vigil.detectors.zscore import RollingZScoreDetector
 from vigil.episodes import EpisodeBuilder, EpisodeStatus
-from vigil.explain import ExplanationRequest, ExplanationWorker, VlmExplainer
+from vigil.explain import ExplanationRequest, ExplanationWorker, window_explainer_from_env
 from vigil.readings import Reading
-from vigil.settings import KafkaSettings, PostgresSettings, VlmSettings
+from vigil.settings import KafkaSettings, PostgresSettings
 from vigil.store import EpisodeStore
 from vigil.topology import FleetTopology
 from vigil.windows import SlidingWindowAssigner
@@ -465,7 +465,7 @@ def run(args: argparse.Namespace) -> int:
     # many flagged windows *would* have been explained. Off entirely with --no-explain.
     explanation_worker = None
     if not args.no_explain:
-        explainer = VlmExplainer(settings=VlmSettings.from_env())
+        explainer = window_explainer_from_env()
         if explainer.available:
             explanation_worker = ExplanationWorker(
                 explainer,
@@ -473,11 +473,12 @@ def run(args: argparse.Namespace) -> int:
                 max_pending=args.explain_queue,
             )
             explanation_worker.start()
-            log.info("explainer configured against %s", explainer.settings.model)
+            log.info("explainer configured against %s", explainer.model_name)
         else:
             log.info(
-                "explainer not configured (VLM_ENDPOINT / VLM_API_KEY / VLM_MODEL); "
-                "episodes will carry no explanation and detection is unaffected"
+                "explainer not configured (set ANTHROPIC_API_KEY, or all of "
+                "VLM_ENDPOINT / VLM_API_KEY / VLM_MODEL); episodes will carry no "
+                "explanation and detection is unaffected"
             )
 
     spine = DetectionSpine(
@@ -790,7 +791,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--no-explain",
         action="store_true",
         help="do not build the explainer at all. Without it the explainer still only runs "
-        "when VLM_ENDPOINT, VLM_API_KEY and VLM_MODEL are all set",
+        "when ANTHROPIC_API_KEY, or all of VLM_ENDPOINT / VLM_API_KEY / VLM_MODEL, is set",
     )
     e.add_argument(
         "--explain-history-s",
