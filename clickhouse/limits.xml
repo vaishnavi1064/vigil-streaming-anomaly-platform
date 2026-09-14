@@ -1,0 +1,17 @@
+<!-- ClickHouse defaults assume a server, not a 1 GB slice of a laptop VM. These caps make
+     it fail a query rather than the container, which is the failure mode that leaves the
+     rest of the stack running.
+
+     background_pool_size is deliberately NOT set here: ClickHouse refuses to start if
+     pool_size * concurrency_ratio drops below number_of_free_entries_in_pool_to_execute_mutation
+     (20 by default), and the stock pool size already satisfies that. Memory is the
+     constraint on this host, not merge concurrency. -->
+<clickhouse>
+    <max_server_memory_usage>805306368</max_server_memory_usage>
+    <mark_cache_size>268435456</mark_cache_size>
+    <uncompressed_cache_size>0</uncompressed_cache_size>
+    <max_concurrent_queries>32</max_concurrent_queries>
+    <logger>
+        <level>warning</level>
+    </logger>
+</clickhouse>

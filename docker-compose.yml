@@ -121,6 +121,91 @@ services:
         limits:
           memory: 1g
 
+  # --- Serving store and event lake (Phase 3) -------------------------------------------
+  # Both start by default: the point of ADR-006's split is lost if the stores it names are
+  # optional extras. Budget on the 8.1 GB Docker VM: Kafka 2g + Postgres 1g + ClickHouse 1g
+  # + MinIO 512m leaves headroom. Flink stays behind its profile because adding its 4 GB on
+  # top would not fit -- that combination is the one thing this file cannot run at once.
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    container_name: vigil-clickhouse
+    ports:
+      - "${CLICKHOUSE_HTTP_PORT:?CLICKHOUSE_HTTP_PORT must be set in .env}:8123"
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:?CLICKHOUSE_USER must be set in .env}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set in .env}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:?CLICKHOUSE_DB must be set in .env}
+      # Without this the default user is passwordless from any host, which makes the
+      # password above decorative.
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./clickhouse/limits.xml:/etc/clickhouse-server/config.d/limits.xml:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      # 127.0.0.1, not localhost: IPv6 is disabled in this Docker VM, so ClickHouse's
+      # `listen_try` skips the :: bind, while `localhost` inside the container resolves
+      # to ::1 first and the check fails against a server that is actually up.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping | grep -q Ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  minio:
+    # Object storage for the Iceberg warehouse. The catalog itself is the Postgres above
+    # (ADR-043), so there is no third container here.
+    # quay.io, not Docker Hub: MinIO's Docker Hub repositories now 404 for anonymous
+    # pulls, including `latest`. quay.io is upstream's own registry and still serves them.
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z.hotfix.7aa24e772
+    container_name: vigil-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_PORT:?MINIO_PORT must be set in .env}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set in .env}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  minio-bucket:
+    # One-shot: creates the warehouse bucket, then exits 0. Idempotent.
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    container_name: vigil-minio-bucket
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set in .env}
+      LAKE_BUCKET: ${LAKE_BUCKET:?LAKE_BUCKET must be set in .env}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        mc alias set lake http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb --ignore-existing "lake/$$LAKE_BUCKET"
+        mc ls lake
+    restart: "no"
+
   # --- Flink, behind a profile ---------------------------------------------------------
   # Not started by default: JobManager plus TaskManager want roughly 2.5 GB, and the Docker
   # VM has 8.1 GB with Kafka and Postgres already in it. Bring it up deliberately:
@@ -196,5 +281,7 @@ services:
 volumes:
   kafka-data:
   postgres-data:
+  clickhouse-data:
+  minio-data:
   flink-checkpoints:
   flink-savepoints:
