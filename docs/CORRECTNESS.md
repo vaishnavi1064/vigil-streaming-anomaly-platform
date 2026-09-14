@@ -14,11 +14,14 @@
 | Synthetic generator -> Kafka | **exactly-once into the log** | Producer idempotence is on, so a retry cannot duplicate a record | Built |
 | Kafka -> detector | **at-least-once** | Offsets commit after episodes are durable, so a crash replays rather than loses | Built |
 | Detector -> Postgres | **effectively-once** | The sink upserts on `(channel, t_start_ms, raised_by)`, so a replay re-derives the same rows instead of duplicating them | Built |
+| Kafka → ClickHouse (serving) | **effectively-once** | Offsets commit after the batch is written, so a crash replays; the replay collapses on `ReplacingMergeTree`'s `(channel, seq, event_ts)` key, and the per-minute rollup counts distinct identities so it is right before the merge too | Built, measured |
+| Kafka → Iceberg (lake) | **effectively-once** | The consumed offsets are written into the same Iceberg snapshot as the rows they produced, so position and data commit atomically and a crash re-reads a batch that was never committed (ADR-044). Kafka's own offset store is switched off, so there is exactly one record of position | Built, measured: restarted with `--from-beginning` and read 0 records; 0 duplicate rows |
 | Inside Flink | **exactly-once** via 2PC: source offsets in the checkpoint, sink writes in a Kafka transaction committed on checkpoint completion, stable transactional-id prefix for epoch fencing | — | Built, running |
 | Reconciliation drift = 0 over a multi-hour run | reconciliation harness, 4-hour soak | **Met.** 5,749,412 readings across 12 channels over 240.0 minutes: drift 0, missing 0, duplicates 0, reordered 0. The independent broker audit reports +77 (see below) |
 
 The end-to-end claim today is therefore: **at-most-once at the edge, exactly-once into the
-Kafka log, exactly-once through the Flink job, effectively-once at the episode sink.** It is
+Kafka log, exactly-once through the Flink job, effectively-once at the episode sink and at
+both storage sinks.** It is
 *not* "exactly-once end to end" -- the edge is weaker and is stated as such -- and the
 zero-drift claim is scoped to the durations actually measured, which is minutes, not hours.
 
@@ -31,6 +34,16 @@ a million times". So every reading carries a **per-channel monotonic sequence nu
 assigned at the ingestion boundary. Downstream, a missing number is a gap and a repeated
 number is a duplicate. That is the identity the reconciliation harness checks
 per-stage invariants against, rather than comparing row counts.
+
+**Scoped to a producer lifetime, and this was originally stated without that qualifier.**
+The sequence is dense while a producer runs and restarts at 1 when it does. For the live
+harness that is immaterial -- a restart shows up as a regression, which is what it is. For a
+*stored* table that outlives producers it matters a great deal: two genuinely different
+readings can carry the same `(channel, seq)`, and it is not hypothetical, it happened on the
+second run of the generator against the lake. The stored stores therefore identify a reading
+by **`(channel, seq, event_ts)`** and report sequence reuse separately from duplication
+(ADR-046). A redelivered record carries an identical event timestamp and still collapses;
+two distinct readings no longer do.
 
 Readings are keyed by channel on the Kafka partitioner, so all of a channel's readings land
 in one partition. That preserves per-channel sequence order and lets the harness check

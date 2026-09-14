@@ -1207,7 +1207,132 @@ measurement.
 
 ---
 
-## 8. Honesty rules held in this document
+## 8. The storage layer: what was measured, and the two defects measuring it found
+
+Not a Q. Like section 7 this reports what a component does and costs, and it is here rather
+than in `ARCHITECTURE.md` because two of its numbers contradict what a reader would otherwise
+assume, and because both defects below were found by running the thing rather than by
+reviewing it.
+
+**The split** (ADR-006, built in ADR-043 to ADR-046). Postgres holds episodes and app state;
+ClickHouse serves readings and per-window scores; Iceberg on MinIO is the durable record and
+what reconciliation audits against. Nothing is mirrored between them.
+
+### 8.1 What ran, on what
+
+Reference hardware as section 1, Docker VM 8.13 GB / 16 CPU. Measured with the full default
+stack up, which is what `docker compose up` starts:
+
+| Service | Memory | Limit |
+|---|---|---|
+| Kafka | 910 MB | 2 GB |
+| ClickHouse | 203 MB | 1 GB |
+| MinIO | 67 MB | 512 MB |
+| Postgres | 42 MB | 1 GB |
+| **Total** | **1.2 GB** | of 8.13 GB |
+
+Flink stays behind its compose profile. Its 4 GB on top of these would not fit, and that
+combination is the one thing the compose file cannot run at once -- stated because "one
+command brings it all up" is otherwise read as including Flink.
+
+### 8.2 ClickHouse, measured
+
+```
+python loadgen.py --rate 400 --duration 20 --channels 6
+python warehouse.py --from-beginning --stop-after-idle-s 12 --no-scores
+```
+
+8,000 readings, 6 channels, **0 undecodable, 0 write failures**, 2 batches, **mean write
+262 ms**. Every channel's sequence span equals its reading count exactly -- the same identity
+invariant the reconciliation ledger checks, computed independently on the serving copy.
+
+### 8.3 Iceberg, measured, including the restart that is the whole claim
+
+```
+python lake.py --from-beginning --stop-after-idle-s 12
+python lake.py --from-beginning --stop-after-idle-s 8     # the restart
+python lake.py --verify
+```
+
+| Step | Result |
+|---|---|
+| First run | 8,000 readings, 1 snapshot |
+| **Restart with `--from-beginning`** | **0 records read** -- the snapshot's offsets won over the flag |
+| 3,600 further readings | resumed exactly at the boundary, 2nd snapshot |
+| `--verify` | 11,600 rows, **0 duplicate rows, 0 sequence gaps** |
+
+The restart is the measurement that matters. `--from-beginning` was passed deliberately and
+ignored, because the offsets recorded in the current Iceberg snapshot are the ones that match
+the stored rows (ADR-044). A sink relying on a Kafka offset commit would have re-read and
+re-written all 8,000.
+
+### 8.4 The reconciliation result: two counts, derived differently, agreeing
+
+```
+python reconciler.py --from-beginning --stop-after-idle-s 12 --audit-lake --no-emit --no-store
+```
+
+**6 of 6 channels agreed.** One count comes from streaming the Kafka log through the ledger;
+the other from reading Parquet off object storage. They share no code and no state, which is
+the only reason agreement between them is worth anything.
+
+The same run also shows both halves reporting the *same* underlying event in their own terms,
+which is the clearest evidence the two views are independent:
+
+| | What it reported |
+|---|---|
+| Live ledger | `drift -3600 ... reordered 3600` -- the sequence regressed, which from the stream's point of view it did |
+| Lake audit | `gaps 0`, `duplicates 0`, `reused-seq 3,600` -- no data missing, nothing written twice, 3,600 readings sharing a seq |
+
+Both are correct. The cause is in 8.5.
+
+### 8.5 Two defects that only appeared under real data
+
+**The rollup counted rows written, not readings.** A ClickHouse materialized view fires on the
+rows being inserted and never sees the `ReplacingMergeTree` dedupe that happens later at merge
+time. With `count()`, replaying a 100-reading batch once made the per-minute rollup report
+**200**. `uniqExact` over the identity is immune, and is now what the rollup stores; full and
+partial replays both leave it at 100. A test pins it.
+
+`value_avg` remains vulnerable and the schema says so: sum and count both inflate on a replay,
+so the mean is exact when a partition was written once or replayed whole, and biased when a
+replay covered part of it. Anything that cannot tolerate that reads `readings_exact`.
+
+**`(channel, seq)` is not unique across producer restarts.** The generator restarts its
+per-channel sequence at 1, so the lake held two genuinely different readings -- eight minutes
+apart, different values -- both carrying `seq=5`. Keyed on `(channel, seq)`, ClickHouse would
+have **deleted the older one at merge time and reported it as a successful dedupe**: data loss
+presented as correctness, which is the worst shape a defect can take here.
+
+Identity in both stores is now `(channel, seq, event_ts)` (ADR-046). A redelivered record
+carries an identical timestamp and still collapses; distinct readings no longer do. The lake
+audit reports the two causes separately, because one is a fault in the sink and the other is a
+fact about the producer.
+
+This also narrows a claim in `docs/CORRECTNESS.md` section 2, which stated the per-channel
+sequence as an identity without qualification. It is dense within a producer lifetime, not
+across a stored table's history, and the document now says so.
+
+### 8.6 What this does not establish
+
+- **No throughput number for either sink.** 262 ms per 4,000-row batch is a write latency on
+  an idle laptop, not a sustained ingest rate, and neither sink has been run against the
+  76,556 ev/s the producer can reach (`docs/SCALE.md`). The scale harness has not been pointed
+  at them.
+- **One partition's worth of failure testing.** The effectively-once claim was verified by
+  restarting the process cleanly. It has not been verified by killing it mid-commit, which is
+  what the chaos suite does to Flink and what would actually exercise Iceberg's commit
+  atomicity rather than trusting it.
+- **No retention, compaction or expiry policy.** The lake grows without bound, small files
+  accumulate one per commit, and nothing expires old snapshots. At this data volume none of
+  that binds; all three are real operational work that has not been done.
+- **The catalog is a single point of failure for two stores.** ADR-043 puts the Iceberg
+  catalog in the application Postgres, so that database being down takes app state and the
+  lake's catalog with it. Accepted deliberately, and named here rather than only in the ADR.
+
+---
+
+## 9. Honesty rules held in this document
 
 - Every number states the hardware and the command that produced it.
 - A target that is missed is reported as missed, not quietly re-scoped afterwards. Revisions to

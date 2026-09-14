@@ -10,7 +10,7 @@ That makes this at-least-once on the wire, and the replay is absorbed by the
 `ReplacingMergeTree` identity key rather than by hoping it does not happen -- the duplicate
 rows exist until a merge collapses them, and every aggregate that has to be exact before
 then is written to be replay-proof (`uniqExact` over seq, not `count()`). The measured
-behaviour is in `docs/EVALUATION.md` section 9.
+behaviour is in `docs/EVALUATION.md` section 8.
 
 Batching is by size or by age, whichever comes first. ClickHouse wants large inserts -- a
 part per row would leave it merging forever -- but a dashboard that only updates when

@@ -54,12 +54,15 @@ The novelty lives in one join and one policy.
 - **context_events**: `id, kind, t_start, t_end, severity, detail, created_at`.
 - **episodes**: `id, t_start, t_end, detector, raw_score, status(real|attributed|suppressed), attributed_to (nullable → context_events.id), explanation (nullable), agent_action_id (nullable), created_at`.
 - **agent_actions**: `id, episode_id, diagnosis, proposed_action, gate_verdict, execution_result, trace, created_at`.
-- Raw readings are **not** stored in Postgres (serving → ClickHouse; durable lake → Iceberg).
+- Raw readings are **not** stored in Postgres (serving → ClickHouse; durable lake → Iceberg). **Both are built and running** (ADR-043 to ADR-046).
+- **readings** (ClickHouse, `ReplacingMergeTree`): `channel, seq, event_ts, value, injected, origin, ingested_at`, ordered by `(channel, seq, event_ts)`. Plus `window_scores` and a per-minute `AggregatingMergeTree` rollup that the dashboard's series panel reads instead of scanning raw rows.
+- **readings** (Iceberg, Parquet on MinIO, partitioned by event day): the durable record and the thing reconciliation audits against. Its catalog is a JDBC catalog in the Postgres above, so the lake needs no extra service.
+- **Identity is `(channel, seq, event_ts)`, not `(channel, seq)`** (ADR-046). The per-channel sequence is dense within one producer lifetime and restarts when the producer does, so the pair alone is not unique across a stored table's history.
 
 ## 7. Failure-first design (the senior signal)
 - **Blast radius.** VLM and agent are isolated rare-path services; if either is down, detection + reconciliation are unaffected — the system degrades to "flag without explanation / without auto-remediation," not to "down."
 - **Backpressure.** Flink backpressure propagates to the source; bounded state (RocksDB); the load harness verifies behavior under overload.
-- **Degradation modes.** Health signal down → fail-open (raise flags). Foundation model down → fall back to the z-score baseline. Serving store down → episodes still persist to Postgres.
+- **Degradation modes.** Health signal down → fail-open (raise flags). Foundation model down → fall back to the z-score baseline. Serving store down → episodes still persist to Postgres, and `/health` reports the two stores separately so a reader can see which half is broken. Lake sink down → Kafka retains six hours of runway, and the sink resumes from the offsets in its own last snapshot rather than from a position something else recorded.
 - **Recovery.** Checkpoints restore Flink state; the reconciliation harness confirms a consistent state and bounded lag post-fault (NFR-7).
 
 ## 8. Correctness model (scoped)
