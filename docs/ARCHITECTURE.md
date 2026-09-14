@@ -71,9 +71,31 @@ effectively-once at serving. Reconciliation proves the interior guarantee contin
 are scoped to where they hold.
 
 ## 9. Deployment view
-Docker Compose on a laptop: Kafka (KRaft), Flink, Postgres, ClickHouse, Iceberg (object store),
-FastAPI, React, Prometheus/Grafana. Heavy model serving (vLLM) runs one phase at a time; the VLM
-may use a hosted endpoint (rare path) to fit resources (NFR-13).
+**Two topologies, and only one of them has ever run.**
+
+**Local -- runs, and is the one-command bring-up.** Docker Compose: Kafka (KRaft), Postgres,
+ClickHouse and MinIO start by default and were measured together at 1.2 GB of the 8.13 GB
+Docker VM. Flink is behind a compose profile because its ~2.5 GB does not fit alongside them,
+which makes Flink-plus-storage the one combination this file cannot run at once. The API and
+the four consumer processes run on the host against those containers. Heavy model serving
+(vLLM) runs one phase at a time; the VLM uses a hosted endpoint on the rare path (NFR-13).
+Prometheus and Grafana are **not** in compose -- their configuration lives in `monitoring/`
+and nothing scrapes locally today.
+
+**Kubernetes -- manifests validated, never applied.** `k8s/` carries 25 resources: StatefulSets
+for Kafka, Postgres, ClickHouse and MinIO with `volumeClaimTemplates`; a 2-replica Deployment
+plus Service for the API; single-replica Deployments for the detector, reconciler and the two
+storage sinks; Jobs for topic and bucket creation; and, outside the default apply set, Flink
+and a CronJob for the agent quality gate. `terraform/` owns the namespace, a ResourceQuota, a
+LimitRange and the Secret (ADR-047). Everything passes static validation -- kubeconform,
+terraform validate, promtool, amtool, 10 checks and 0 failures -- and **no pod has ever been
+scheduled from it**. `docs/DEPLOYMENT.md` has the apply procedure and the full list of what
+static validation does not establish.
+
+Three differences from the local topology are deliberate rather than incidental: Kafka is
+reachable only in-cluster (no host listener), the lake sink is pinned to one replica with
+`strategy: Recreate` because its offsets live in the Iceberg snapshot (ADR-044), and the four
+consumers carry no probes because every available check was worse than none (ADR-048).
 
 ## 10. Decisions
 The tradeoffs behind this design are recorded as ADRs in `DECISIONS.md` (detector choice, the

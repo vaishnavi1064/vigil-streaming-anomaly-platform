@@ -1332,7 +1332,97 @@ across a stored table's history, and the document now says so.
 
 ---
 
-## 9. Honesty rules held in this document
+## 9. The deployment layer: validated configuration, nothing applied
+
+Not a Q, and not a measurement of the running system. This section exists because the
+repository now contains Kubernetes manifests, Terraform and monitoring configuration, and
+those are the artifacts most easily mistaken for evidence that something was deployed.
+**Nothing here has run on a Kubernetes cluster.** No kind or minikube cluster was created, no
+pod was ever scheduled, no Prometheus has scraped anything.
+
+### 9.1 What was validated, with what, and what it returned
+
+Re-runnable: `python scripts/validate_deploy.py --report docs/results/deploy-validation.txt`.
+Transcript committed at that path.
+
+| Check | Tool | Result |
+|---|---|---|
+| 25 resources across 11 manifests | `kubeconform -strict`, k8s 1.31.0 | **Valid 25, Invalid 0, Errors 0** |
+| Rendered overlay | `kubectl kustomize k8s` | 19 resources rendered, exit 0 |
+| IaC type-check | `terraform validate` | "Success! The configuration is valid." |
+| IaC formatting | `terraform fmt -check` | clean |
+| Alert rules | `promtool check rules` | 10 rules found, exit 0 |
+| Scrape config | `promtool check config` | valid syntax, 1 rule file |
+| Alert routing | `amtool check-config` | SUCCESS, 2 inhibit rules, 2 receivers |
+| Dashboard JSON | parse | 9 panels, 9 expressions |
+| Dashboard PromQL | `promtool check rules` on the extracted expressions | 9 valid |
+| Panel/rule metric names against the exporter | cross-check | **9 referenced, 9 exported, 0 phantom** |
+
+**10 passed, 0 failed, 0 skipped.** Tool versions: kubectl 1.37.0, kubeconform (latest),
+terraform 1.16.2, promtool 3.14.0, amtool 0.34.0, installed to `E:\tools` rather than
+system-wide.
+
+The application image was built rather than only described: **900 MB**, all four CLI
+entrypoints parse, the package imports, and it runs as non-root uid 10001.
+
+### 9.2 The tool that could not participate, and why it matters
+
+`kubectl apply --dry-run=client` is the validation step most people would expect here, and it
+**cannot run offline**. It performs API discovery against a live server before validating
+anything, so on a machine with no cluster it fails with a connection error that says nothing
+about the manifests — and it fails that way even with `--validate=false`.
+
+This is worth stating rather than quietly substituting a different tool, because "validated
+with kubectl --dry-run" is a claim that sounds stronger than kubeconform and, on a machine
+with no cluster, cannot have been made. kubeconform validates against the published
+Kubernetes JSON schemas offline, in `-strict` mode, which rejects unknown fields — a typo
+like `resource:` for `resources:` is caught. That is what did the work.
+
+### 9.3 What static validation does not establish
+
+Every item below is unverified, not merely untested-so-far:
+
+- **That the stack comes up at all.** Start ordering, crash-loop behaviour before the stores
+  are ready, and whether the probe timings are right are all unobserved. There are no init
+  containers gating consumers on store readiness, so first apply is expected to restart pods.
+- **That the probes pass against the real containers.** The ClickHouse probe is `httpGet
+  /ping`, deliberately different from the compose `wget` form because the compose healthcheck
+  failed on an IPv6 detail. The reasoning is sound and has not been observed working.
+- **Resource requests and limits.** Extrapolated from the measured compose footprint (1.2 GB
+  across four services). Whether the consumers fit their limits under load is unknown — the
+  scale harness has never been pointed at a cluster.
+- **Storage.** No StorageClass was exercised. On a cluster without a default StorageClass the
+  `volumeClaimTemplates` leave every store Pending, and nothing checks for one.
+- **Terraform apply.** `validate` type-checks the configuration; it never contacts a cluster.
+  The provider has not authenticated and no resource has been created.
+- **Any alert firing or resolving.** The rules parse. No Prometheus instance has scraped the
+  API, so the `for:` durations are unexercised and no alert has moved through its lifecycle.
+- **The dashboard rendering.** The JSON parses and every expression is valid PromQL over
+  metrics that exist. Grafana has never loaded it.
+
+### 9.4 Gaps that are structural rather than untested
+
+Two things will not work even once this is applied, and both are deliberate:
+
+- **Consumer-group lag alerting cannot fire.** Nothing exports
+  `kafka_consumergroup_lag`; that needs a Kafka exporter the manifests do not deploy. The
+  rule is kept, valid, labelled `requires-kafka-exporter` and routed to a null receiver, so
+  the gap is visible rather than discovered when an alert never arrives (ADR-049).
+- **Four workloads have no liveness probe.** The detector, reconciler and both sinks restart
+  on process exit and not on a hang. Every available probe was worse than none — `exec: true`
+  is decoration, and probing Kafka turns a broker outage into a crash-loop. The honest fix is
+  a heartbeat file written by each poll loop, which is application work that has not been
+  done (ADR-048).
+
+### 9.5 What did not change
+
+The compose stack is untouched. `docker compose up -d` still brings up Kafka, Postgres,
+ClickHouse and MinIO, and section 8's measurements still hold — the deployment layer is
+additive, and the thing that demonstrably runs is still the thing that ran before.
+
+---
+
+## 10. Honesty rules held in this document
 
 - Every number states the hardware and the command that produced it.
 - A target that is missed is reported as missed, not quietly re-scoped afterwards. Revisions to
