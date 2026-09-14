@@ -27,7 +27,7 @@ text{font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
 <g class="gray">
 <rect x="250" y="40" width="180" height="52" rx="8"/>
 <text class="th" x="340" y="60" text-anchor="middle" dominant-baseline="central">Ingestion</text>
-<text class="ts" x="340" y="78" text-anchor="middle" dominant-baseline="central">gap-fill + backfill</text>
+<text class="ts" x="340" y="78" text-anchor="middle" dominant-baseline="central">gap detect (no backfill)</text>
 </g>
 <g class="gray">
 <rect x="250" y="124" width="180" height="52" rx="8"/>
@@ -52,12 +52,12 @@ text{font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
 <g class="gray">
 <rect x="250" y="460" width="180" height="52" rx="8"/>
 <text class="th" x="340" y="480" text-anchor="middle" dominant-baseline="central">Serving &amp; storage</text>
-<text class="ts" x="340" y="498" text-anchor="middle" dominant-baseline="central">OLAP · lake · Postgres</text>
+<text class="ts" x="340" y="498" text-anchor="middle" dominant-baseline="central">ClickHouse · Iceberg · Postgres</text>
 </g>
 <g class="gray">
 <rect x="250" y="544" width="180" height="52" rx="8"/>
 <text class="th" x="340" y="564" text-anchor="middle" dominant-baseline="central">Dashboard</text>
-<text class="ts" x="340" y="582" text-anchor="middle" dominant-baseline="central">React + FastAPI</text>
+<text class="ts" x="340" y="582" text-anchor="middle" dominant-baseline="central">FastAPI + vanilla JS</text>
 </g>
 <g class="gray">
 <rect x="40" y="208" width="170" height="52" rx="8"/>
@@ -72,7 +72,7 @@ text{font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
 <g class="gray">
 <rect x="460" y="376" width="180" height="52" rx="8"/>
 <text class="th" x="550" y="396" text-anchor="middle" dominant-baseline="central">Explain + remediate</text>
-<text class="ts" x="550" y="414" text-anchor="middle" dominant-baseline="central">VLM + gated agent</text>
+<text class="ts" x="550" y="414" text-anchor="middle" dominant-baseline="central">VLM · QLoRA planner · gate</text>
 </g>
 
 <line x1="340" y1="94" x2="340" y2="118" class="edge" marker-end="url(#arrow)"/>
