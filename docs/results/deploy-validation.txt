@@ -1,0 +1,40 @@
+VIGIL DEPLOYMENT VALIDATION
+==============================================================================
+
+Static validation only. Nothing here was applied to a cluster.
+
+  PASS  kubeconform (manifests) 
+        Summary: 25 resources found in 11 files - Valid: 25, Invalid: 0, Errors: 0, Skipped: 0
+  PASS  kustomize build         
+        rendered 19 resources (953 lines)
+  PASS  terraform fmt           
+  PASS  terraform validate      
+        [32m[1mSuccess![0m The configuration is valid.
+        [0m
+  PASS  promtool (rules)        
+        Checking monitoring/prometheus/rules/vigil.yml
+          SUCCESS: 10 rules found
+  PASS  promtool (config)       
+        Checking monitoring/prometheus/prometheus.yml
+          SUCCESS: 1 rule files found
+         SUCCESS: monitoring/prometheus/prometheus.yml is valid prometheus config file syntax
+        
+        Checking monitoring\prometheus\rules\vigil.yml
+          SUCCESS: 10 rules found
+  PASS  amtool (alertmanager)   
+        Checking 'monitoring/alertmanager/alertmanager.yml'  SUCCESS
+        Found:
+         - global config
+         - route
+         - 2 inhibit rules
+         - 2 receivers
+         - 0 templates
+  PASS  grafana dashboard JSON  
+        9 panels, 9 expressions
+  PASS  grafana dashboard PromQL
+        Checking E:\newp\.dashboard-exprs.yml
+          SUCCESS: 9 rules found
+  PASS  metric names            
+        9 referenced, all exported
+
+10 passed, 0 failed, 0 skipped

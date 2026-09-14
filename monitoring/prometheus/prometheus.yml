@@ -1,0 +1,76 @@
+# Prometheus scrape configuration.
+#
+# One real scrape target, and that is the honest state of this platform's instrumentation.
+# The vigil API exposes /metrics (gauges read from the stores at scrape time); Kafka,
+# ClickHouse, MinIO and Postgres each need an exporter sidecar or a JMX agent that is not
+# deployed here, so their jobs are written below and commented out rather than pointed at
+# ports nothing is listening on. A scrape config full of targets that are all down is worse
+# than a short one that works: it trains whoever is on call to ignore `up == 0`.
+
+global:
+  scrape_interval: 30s
+  scrape_timeout: 10s
+  evaluation_interval: 30s
+  external_labels:
+    cluster: vigil
+    environment: local
+
+rule_files:
+  - rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # The vigil API. In-cluster this resolves through the Service; the annotations on the pod
+  # template (prometheus.io/scrape) are what a Prometheus Operator would use instead.
+  - job_name: vigil-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["vigil-api.vigil.svc.cluster.local:8000"]
+        labels:
+          service: vigil-api
+    # The gauges here are read from Postgres and ClickHouse on each scrape, so a scrape is a
+    # few queries. 30s is deliberate: faster buys nothing on a per-minute rollup and costs
+    # the stores real work.
+
+  # Kubernetes-native discovery, for a cluster that has the pod annotations the manifests
+  # already set. Commented out because it needs a ServiceAccount with RBAC to list pods, and
+  # that RBAC is not in k8s/ -- shipping a scrape config that silently fails authorization
+  # would be the same mistake as pointing at a port nobody listens on.
+  #
+  # - job_name: vigil-pods
+  #   kubernetes_sd_configs:
+  #     - role: pod
+  #       namespaces:
+  #         names: [vigil]
+  #   relabel_configs:
+  #     - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+  #       action: keep
+  #       regex: "true"
+  #     - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+  #       action: replace
+  #       target_label: __metrics_path__
+  #       regex: (.+)
+
+  # NOT DEPLOYED. Each of these needs an exporter this repository does not ship:
+  #
+  #   kafka        -> danielqsj/kafka-exporter, or the JMX exporter as a Java agent.
+  #                   Consumer-group lag lives here, which is why the lag alert rule in
+  #                   rules/vigil.yml is marked as requiring it.
+  #   postgres     -> prometheus-community/postgres-exporter
+  #   clickhouse   -> ClickHouse serves Prometheus format natively on 9363 once
+  #                   <prometheus> is enabled in its config; the limits.xml in k8s/ does not
+  #                   enable it.
+  #   minio        -> MinIO serves /minio/v2/metrics/cluster, but it needs a bearer token
+  #                   unless MINIO_PROMETHEUS_AUTH_TYPE=public.
+  #
+  # Adding any of them is a manifest change plus a job here. They are listed so the gap is
+  # visible rather than discovered when an alert never fires.

@@ -1,0 +1,77 @@
+# Alertmanager routing.
+#
+# The receivers are deliberately inert. There is no Slack webhook, no PagerDuty key and no
+# SMTP server in this repository, and inventing one would put a dead URL in a config that
+# looks configured. `null` swallows what should not page; `default` holds alerts so they are
+# visible in the Alertmanager UI and in `amtool alert`, which is where they can actually be
+# seen without credentials.
+#
+# Wiring a real receiver is three lines and a secret -- the shape is in the commented block at
+# the bottom. What matters and is real here is the routing: what groups with what, what
+# inhibits what, and how long a repeat waits.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  # Group by the thing an operator triages together. Grouping by alertname alone would merge
+  # a per-channel sequence gap across twelve channels into one notification and lose which
+  # channels; grouping by channel as well keeps them separable.
+  group_by: ["alertname", "component"]
+  group_wait: 30s
+  group_interval: 5m
+  # Four hours, not the usual 30 minutes. Every alert here is about a condition that persists
+  # until someone acts -- drift does not resolve itself -- so a fast repeat is noise rather
+  # than urgency.
+  repeat_interval: 4h
+  receiver: default
+
+  routes:
+    # The correctness alerts are the reason this platform exists. Kept in their own branch so
+    # they can be routed somewhere different from availability noise without restructuring.
+    - matchers:
+        - component = "reconciliation"
+      receiver: default
+      group_wait: 10s
+      continue: false
+
+    # Rules that cannot fire because their exporter is not deployed. Routed to null so that
+    # if one ever does fire -- because someone deployed the exporter and forgot to remove the
+    # label -- it does not read as a real page from a rule nobody has validated against data.
+    - matchers:
+        - status = "requires-kafka-exporter"
+      receiver: "null"
+
+inhibit_rules:
+  # If the API is down, its store gauges stop being reported and every rule keyed off them
+  # becomes stale-then-absent. Suppress the downstream noise and page on the cause.
+  - source_matchers:
+      - alertname = "ApiDown"
+    target_matchers:
+      - component =~ "postgres|clickhouse|serving-store|warehouse-sink"
+    equal: ["cluster"]
+
+  # Postgres being down takes the Iceberg catalog with it (ADR-043), so a lake-side complaint
+  # during a Postgres outage is a symptom, not a second incident.
+  - source_matchers:
+      - alertname = "EpisodeStoreDown"
+    target_matchers:
+      - component = "reconciliation"
+    equal: ["cluster"]
+
+receivers:
+  - name: default
+    # No notifier configured. Alerts land here and are visible via the UI or `amtool alert`.
+    # This is an honest empty receiver, not a placeholder pointing at a URL that 404s.
+
+  - name: "null"
+
+# A real receiver, for whoever wires one up. Left commented because a webhook URL is a
+# credential and this file is in git:
+#
+#   - name: slack
+#     slack_configs:
+#       - api_url_file: /etc/alertmanager/secrets/slack-webhook
+#         channel: "#vigil-alerts"
+#         title: '{{ .CommonAnnotations.summary }}'
+#         text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'

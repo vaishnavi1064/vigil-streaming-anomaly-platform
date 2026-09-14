@@ -1,0 +1,174 @@
+# Alert rules.
+#
+# Two principles, both learned from this repository's own evaluation work:
+#
+# 1. **An alert must be able to fire for a real reason and must not fire for a fake one.**
+#    Every rule below keys off a series that is *absent* when nothing has measured it, which
+#    is why `vigil.api.metrics` creates gauges only after fetching their value. A rule written
+#    against a gauge that defaults to 0 would be permanently green and would look like health.
+#
+# 2. **Say what is not covered.** The consumer-lag rule at the bottom is the one an operator
+#    would most want, and it cannot fire today because nothing exports Kafka consumer-group
+#    lag -- that needs an exporter the manifests do not deploy. It is written, marked, and
+#    left non-functional rather than quietly dropped, because a monitoring directory that
+#    silently lacks the most important alert is the failure mode worth avoiding.
+
+groups:
+  - name: vigil-correctness
+    interval: 30s
+    rules:
+      # The central claim of the platform. Drift is the sum of per-channel
+      # (sequence span - readings); zero is the claim and anything else is data loss or
+      # duplication that the ledger detected.
+      - alert: ReconciliationDrift
+        expr: vigil_reconciliation_drift != 0
+        for: 2m
+        labels:
+          severity: critical
+          component: reconciliation
+        annotations:
+          summary: "Reconciliation drift is {{ $value }}, not 0"
+          description: >-
+            The per-channel identity invariant (readings == max_seq - min_seq + 1) does not
+            hold. A positive value is missing readings, a negative value is duplicates.
+            Neither is inferable from a row count, which is why this is the alert that
+            matters. Check `python reconciler.py --from-beginning` for the per-channel
+            breakdown.
+
+      # The independent check. The ledger and the broker's own offsets are derived
+      # differently, so they disagreeing is a finding even when drift itself is 0.
+      - alert: BrokerOffsetDrift
+        expr: vigil_reconciliation_offset_drift != 0
+        for: 5m
+        labels:
+          severity: warning
+          component: reconciliation
+        annotations:
+          summary: "Broker-offset audit reports {{ $value }}"
+          description: >-
+            What the broker says it retained does not match what the harness consumed. A
+            small positive value at a shutdown boundary is expected and documented (gap G-14);
+            a sustained non-zero value is not.
+
+      # Per channel, from the serving store. This is the same invariant as above computed
+      # independently on the ClickHouse copy, so it can fire when the live ledger is not
+      # running at all.
+      - alert: ChannelSequenceGap
+        expr: vigil_channel_sequence_gap != 0
+        for: 5m
+        labels:
+          severity: warning
+          component: serving-store
+        annotations:
+          summary: "Channel {{ $labels.channel }} has a sequence gap of {{ $value }}"
+          description: >-
+            The serving store holds fewer distinct readings than the channel's sequence span
+            implies. Note this fires on a producer restart too, because a restarted producer
+            reissues sequence numbers (ADR-046) -- check whether the span or the producer
+            moved before treating it as loss.
+
+      # Nothing has ever audited. Distinct from "audited and clean", which is the whole
+      # reason the metric is absent rather than zero when no run has happened.
+      - alert: ReconciliationNeverRan
+        expr: absent(vigil_reconciliation_drift)
+        for: 30m
+        labels:
+          severity: warning
+          component: reconciliation
+        annotations:
+          summary: "No reconciliation run has been recorded"
+          description: >-
+            The drift series is absent, which means no run has ever written to
+            reconciliation_runs -- not that drift is zero. A dashboard reading "drift: 0"
+            with nothing measuring drift is the state this alert exists to prevent.
+
+  - name: vigil-availability
+    interval: 30s
+    rules:
+      - alert: ApiDown
+        expr: up{job="vigil-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "The vigil API is not answering scrapes"
+          description: >-
+            Detection is unaffected by this -- the detector, reconciler and sinks are separate
+            processes -- but the dashboard and every metric below are blind while it lasts.
+
+      - alert: EpisodeStoreDown
+        expr: vigil_postgres_up == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: postgres
+        annotations:
+          summary: "The API cannot reach Postgres"
+          description: >-
+            Episodes are not being read, and because the Iceberg catalog is a JDBC catalog in
+            the same database (ADR-043), the lake sink is likely failing too. One outage,
+            two stores.
+
+      - alert: ServingStoreDown
+        expr: vigil_clickhouse_up == 0
+        for: 10m
+        labels:
+          severity: warning
+          component: clickhouse
+        annotations:
+          summary: "The API cannot reach ClickHouse"
+          description: >-
+            Serving panels are blank. Episodes still persist to Postgres and detection is
+            unaffected, which is why this is a warning and the Postgres equivalent is not.
+
+      - alert: PipelineDisturbanceSustained
+        expr: increase(vigil_pipeline_health_disturbed_windows[30m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: reconciliation
+        annotations:
+          summary: "{{ $value }} new disturbed health windows in 30 minutes"
+          description: >-
+            The harness is grading windows as not-ok at a sustained rate. Conditioning
+            attributes anomalies overlapping these windows to the pipeline rather than paging,
+            so a sustained disturbance quietly reduces detection sensitivity.
+
+      - alert: NoReadingsIngested
+        expr: increase(vigil_reading_rows_total[15m]) == 0
+        for: 15m
+        labels:
+          severity: warning
+          component: warehouse-sink
+        annotations:
+          summary: "No readings have reached the serving store in 15 minutes"
+          description: >-
+            Either nothing is producing, or the ClickHouse sink is not consuming. Check the
+            warehouse-sink Deployment before assuming the producer stopped.
+
+  - name: vigil-not-yet-wired
+    interval: 30s
+    rules:
+      # ---------------------------------------------------------------------------------
+      # THIS RULE CANNOT FIRE TODAY. `kafka_consumergroup_lag` comes from a Kafka exporter
+      # that k8s/ does not deploy (see the commented jobs in prometheus.yml). It is kept
+      # here, syntactically valid and marked, because consumer lag is the alert an operator
+      # of this platform would reach for first, and deleting it would make the gap invisible.
+      #
+      # To make it real: deploy danielqsj/kafka-exporter against the broker, add its scrape
+      # job, and delete this comment block.
+      # ---------------------------------------------------------------------------------
+      - alert: ConsumerGroupLagHigh
+        expr: max by (consumergroup, topic) (kafka_consumergroup_lag) > 100000
+        for: 10m
+        labels:
+          severity: warning
+          component: kafka
+          status: requires-kafka-exporter
+        annotations:
+          summary: "Consumer group {{ $labels.consumergroup }} is {{ $value }} messages behind"
+          description: >-
+            Sustained lag on {{ $labels.topic }}. The scale harness measured a plateau at
+            170,414 readings/s across 3-6 consumers, so lag that grows without the producer
+            rate changing points at a stuck consumer rather than at saturation.
