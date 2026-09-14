@@ -280,20 +280,14 @@ def build_trainer(config: QloraConfig):  # pragma: no cover - needs a GPU host
             prompt_text = tokenizer.apply_chat_template(
                 prompt, tokenize=False, add_generation_prompt=True
             )
-            records.append(
-                {"text": prompt_text + completion + tokenizer.eos_token}
-            )
+            records.append({"text": prompt_text + completion + tokenizer.eos_token})
         return Dataset.from_list(records)
 
     train = to_text(load_jsonl(config.train_jsonl))
     evaluation = to_text(load_jsonl(config.eval_jsonl))
 
-    response_template_ids = tokenizer.encode(
-        "<|im_start|>assistant\n", add_special_tokens=False
-    )
-    collator = DataCollatorForCompletionOnlyLM(
-        response_template_ids, tokenizer=tokenizer
-    )
+    response_template_ids = tokenizer.encode("<|im_start|>assistant\n", add_special_tokens=False)
+    collator = DataCollatorForCompletionOnlyLM(response_template_ids, tokenizer=tokenizer)
     trainer = SFTTrainer(
         model=model,
         processing_class=tokenizer,
