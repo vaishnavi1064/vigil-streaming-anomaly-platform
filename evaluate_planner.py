@@ -183,7 +183,9 @@ def score_baseline(cases: list[HardCase], as_deployed: bool = False) -> PlannerS
     return score
 
 
-def score_model(cases: list[HardCase], generate, name: str, cache_path: Path | None = None) -> PlannerScore:
+def score_model(
+    cases: list[HardCase], generate, name: str, cache_path: Path | None = None
+) -> PlannerScore:
     """Any callable that maps (system, user) to a reply string. Resumable via cache_path."""
     done: dict[str, str] = {}
     if cache_path and cache_path.exists():
@@ -327,7 +329,10 @@ def main(argv: list[str] | None = None) -> int:
     model = None
     if args.adapter:
         model = score_model(
-            cases, local_adapter(args.adapter, args.base_model), f"qlora:{args.adapter.name}", cache_path=REPO / "artifacts" / "planner-eval-progress.jsonl"
+            cases,
+            local_adapter(args.adapter, args.base_model),
+            f"qlora:{args.adapter.name}",
+            cache_path=REPO / "artifacts" / "planner-eval-progress.jsonl",
         )
     elif args.endpoint:
         model = score_model(
