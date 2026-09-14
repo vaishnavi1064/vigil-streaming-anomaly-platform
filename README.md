@@ -1,229 +1,239 @@
 # Vigil
 
-Real-time anomaly detection on a streaming backbone, where the detector is conditioned on
-operational context -- pipeline health and deploy markers -- so that genuine incidents are
-separated from artifacts of the pipeline itself.
+Real-time anomaly detection that knows the difference between a broken sensor and a
+deploy — on a streaming backbone that can prove it did not lose your data.
 
-**Status: phases 1-4 built, phase 3's target missed and published as missed.** The
-detection spine, the correctness backbone (Flink with two-phase commit, the reconciliation
-harness, a chaos suite, the scaling curve) and the safety-gated agent all run. The
-conditioning core -- the actual contribution -- has been measured twice against its target
-and missed it twice; both results and the diagnosis are in `docs/EVALUATION.md` section 3.4
-rather than filed away. ClickHouse, Iceberg, the VLM explainer and the production wrapper
-are not built. This README describes what exists, not what is planned; `BUILD.md` has the
-roadmap and `docs/BLOCKERS.md` has what is waiting on a human.
+![Architecture: ingestion to Kafka to Flink to detection to conditioning, with reconciliation
+feeding the conditioning step, and serving, dashboard and agent hanging off
+it.](docs/architecture.svg)
 
 ---
 
-## Results so far
+## Results
 
-Measured on the reference laptop: Intel Core i7-12650H (10 cores / 16 threads), 15.6 GB RAM,
-Windows 11, Docker Desktop with 16 CPU / 8.1 GB to the VM, Python 3.12.10. Every figure
-below comes from a command recorded in `docs/EVALUATION.md`.
+Every number below was produced by a command in this repository on the hardware named at the
+bottom. Where a target was missed it says so, and the misses are the interesting part.
 
-| | |
-|---|---|
-| Ingest throughput, single process, blast mode | **76,556 events/s** (NFR-4 target: 20,000) |
-| Consumer throughput, one process draining a 3.9 M backlog | **94,495 readings/s** |
-| Consumer throughput, plateau | **170,414 readings/s** at 3-6 consumers over 6 partitions |
-| Scaling | 1.80x at six consumers, efficiency 30%. **NFR-5's near-linear claim: not met** |
-| Hot-path detection latency, p99 | **0.49 ms** (NFR-1 budget: 250 ms) |
-| Foundation model, off critical path, p99 | 34.8 ms amortised per window |
-| Reconciliation drift | **0** over **5,749,412 readings and 4 hours** (NFR-6), verified against an independent broker-offset audit |
-| Chaos | **5/5** fault modes recovered to a verified consistent state, each proven to have disrupted something |
-| Flink parity | 1,056 windows scored, differences of exactly **0.0000** against the Python detector, 30 checkpoints at 283 ms average |
-| Flink exactly-once, **across a crash** | TaskManager SIGKILLed mid-checkpoint: restored from checkpoint 5, recovered in **14.9 s**, and a `read_committed` consumer saw **328 window scores with 0 duplicates** |
-| Detection benchmark, 144 labelled series | z-score median AUC-PR **0.198** against Chronos-Bolt-tiny **0.152**, 78 wins to 56, at **141x less compute**. The foundation model loses |
-| Agent quality gate | 400 episodes, 1,267 actions: **100%** grounded, gate-approved and sandboxed; 97.1% carrying a runbook citation |
-| Context conditioning vs. the unconditioned baseline | +18.9% false-page reduction against a 40% target, -3.3% recall against a 5% tolerance. **NFR-8: not met, in seven measurements.** The recall half is met for the first time; the reduction half was arithmetically unreachable on the wide run, where 75 of 112 false pages overlap no injected excursion at all |
-| Live feed | 1,387 MQTT messages -> 11,089 readings across 336 channels in 45 s, 0 gaps |
-| Tests | **524** (unit, plus integration against real Kafka, Postgres and a live Flink cluster) |
+| What | Measured | Where |
+|---|---|---|
+| **Exactly-once through Flink, fault-tested** | TaskManager SIGKILLed mid-checkpoint and held down 60 s: 58/58 samples unhealthy, restored from checkpoint 5, recovered in **14.9 s**, and a `read_committed` consumer saw **328 distinct window scores with 0 duplicates** | [CHAOS](docs/CHAOS.md) 2.1 |
+| **Zero reconciliation drift over four hours** | **5,749,412 readings** across 12 channels over **240.0 minutes**: drift 0, missing 0, duplicates 0, reordered 0, at all sixteen checkpoints | [CORRECTNESS](docs/CORRECTNESS.md) 4a |
+| **Chaos** | **5 fault modes** — broker kill, broker pause, network partition, consumer kill, Flink TaskManager kill — each proving it disrupted something (20/20 samples unserviceable) and each recovering inside a 60 s budget. Worst recovery 25.1 s | [CHAOS](docs/CHAOS.md) |
+| **Throughput** | Producer **76,556 ev/s** blast; consumer plateau **170,414 readings/s** at 3–6 consumers over 6 partitions. NFR-4 (20,000/s) met | [SCALE](docs/SCALE.md) |
+| **Scaling, honestly** | NFR-5 asked for near-linear and **did not get it**: 6 consumers buy **1.80x**, efficiency falls to 30%, and the plateau is at 3 — half the partition count, so partitions are not the bind | [SCALE](docs/SCALE.md) 2–3 |
+| **QLoRA tool-calling planner** | **97.7% exact-match (293/300)** on held-out hard cases, against **20.0%** for the rules handed licences they could not parse and **0.0%** for the rules as deployed. Forbidden actions **1.0% (3/300)** against the baseline's 61.3% | [EVALUATION](docs/EVALUATION.md) 6 |
+| **Detection benchmark, including the loss** | On 144 of 200 TSB-AD-M series the **z-score baseline beats** Chronos-Bolt-tiny — median AUC-PR **0.198 vs 0.152**, head-to-head **78 / 56 / 10 ties** — at **141x less compute** (59 s vs 8,312 s). Chronos wins where normal is structured and non-stationary (Exathlon 19–8) and loses on sharp excursions against a flat baseline (SVDB 21–1) | [EVALUATION](docs/EVALUATION.md) 4 |
+| **Serving store and event lake** | ClickHouse for readings and window scores; Iceberg on MinIO as the durable record. Both **effectively-once**: the lake sink was restarted with `--from-beginning` and **read 0 records**, because the Kafka offsets live in the Iceberg snapshot that committed the rows. 0 duplicate rows | [EVALUATION](docs/EVALUATION.md) 8 |
+| **Reconciliation against the lake** | Ledger and lake agreed on **6/6 channels** — one count from streaming the Kafka log, one from reading Parquet off object storage, sharing no code and no state | [EVALUATION](docs/EVALUATION.md) 8.4 |
+| **The core contribution, which missed its target** | Context-conditioned detection measured **seven times**. Best run: **+18.9% false-page reduction at −3.3% recall**. NFR-8 wanted ≥40% reduction at ≈0 recall loss. **Missed, five times, and published each time** | [EVALUATION](docs/EVALUATION.md) 3 |
 
-What these numbers are **not**. The producer and consumer figures were taken separately, so
-neither is an end-to-end throughput claim. The soak's broker audit shows +77 records retained
-but unpolled at the instant the consumer's clock expired -- a shutdown boundary, not loss,
-explained in `docs/CORRECTNESS.md`. The exactly-once evidence is one kill of one job on one
-TaskManager, not an exhaustive test. The benchmark scored 144 of 200 series -- truncation
-excluded the late-onset half -- and used Chronos-Bolt at its smallest size. And the
-conditioning result is a **failure, published as one**: the second attempt turned out to be
-testing something other than what it claimed, which is written up in full rather than retried
-until it passed. `docs/CORRECTNESS.md` says where each guarantee starts and stops;
-`docs/BLOCKERS.md` lists every gap of this kind in one table.
-
-![The Phase 1 dashboard: KPI tiles for episode count and per-detector latency against the
-250 ms hot-path budget, a bar comparison of episodes raised by each detector, and a table of
-detected episodes with channel, detector, peak score, duration and ground-truth
-labels.](docs/images/dashboard-light.png)
+**697 tests** (78 integration, against real Kafka, Postgres, ClickHouse and Iceberg containers).
 
 ---
 
-## What it does
+## The dashboard
 
-A high-velocity stream of unlabelled sensor telemetry is ingested into Kafka, assigned to
-event-time sliding windows per channel, and scored by two detectors at once:
+Live readings, the detector's episodes drawn on top of them, and throughput ticking — all
+read from the same stored data every other panel uses. Inline SVG, no charting library.
 
-- a **rolling z-score baseline** on the hot path -- cheap, well understood, and the
-  permanent bar every later claim is measured against;
-- a **zero-shot time-series foundation model** (Chronos-Bolt) running batched off the
-  critical path, scoring windows by forecast residual against its own predicted uncertainty.
+![The Vigil dashboard in light mode: KPI tiles, a live stream chart with anomaly markers,
+detector comparison, the reconciliation panel showing zero drift, and the episodes
+table.](docs/images/dashboard-live-light.png)
 
-Consecutive flagged windows on a channel are merged into a single **episode**, because an
-operator is paged once per incident, and stored in Postgres.
+A level shift caught as it happens — the teal channel steps up exactly at the dashed onset
+rule, inside the shaded episode band:
 
-The part that is the actual contribution -- conditioning those detections on pipeline-health
-signals and deploy markers, so an artifact is attributed to its cause instead of paged -- is
-Phase 3. What exists today is the wire it runs on: a dedicated context topic, the marker
-schema, and a load generator built so that the eventual claim can be *disproved*.
+![Close-up of the live chart: six channels, a shaded episode band, and a red marker on the
+channel that moved.](docs/images/dashboard-live-chart-dark.png)
 
-### The generator is adversarial on purpose
+<!-- DEMO GIF PLACEHOLDER: replace this line with the <60s demo recording. -->
 
-The easy way to report a large false-positive reduction is to mute everything during a
-deploy window, and a naive evaluation cannot tell that apart from correct attribution. So
-`loadgen.py --scenario` schedules four populations deliberately: deploys that perturb
-telemetry, deploys that perturb nothing, real faults outside every window, and real faults
-*inside* windows including the quiet ones. That last group is the trap -- during a quiet
-deploy there is no artifact at all, so anything suppressed there could only be blanket
-muting. Deploys touch a subset of channels, so a policy ignoring scope over-suppresses and
-gets caught too.
-
-The success criterion is a **pair**, never a single number: at least 40% false-positive
-reduction **and** approximately zero recall loss, measured against a read-only shadow pass
-over byte-identical data (ADR-016).
+Dark mode: [full page](docs/images/dashboard-live-dark.png) ·
+[chart close-up](docs/images/dashboard-live-chart-light.png)
 
 ---
 
-## Run it
-
-Prerequisites: Docker, Python 3.12.
+## Quickstart
 
 ```bash
-cp .env.example .env          # then fill in POSTGRES_PASSWORD and KAFKA_CLUSTER_ID
-python -c "import base64,uuid;print(base64.urlsafe_b64encode(uuid.uuid4().bytes).rstrip(b'=').decode())"
+git clone <this repo> && cd vigil
+cp .env.example .env          # fill in the blanks; nothing has a default
+python -m venv .venv && .venv/Scripts/pip install -e ".[dev,explain,lake]"
 
-docker compose up -d --wait   # Kafka in KRaft mode + Postgres, topics created explicitly
-
-python -m venv .venv && .venv/Scripts/pip install -e ".[dev,foundation,explain]"
+docker compose up -d          # Kafka, Postgres, ClickHouse, MinIO. 4/4 healthy in ~8 s
 ```
 
-Nothing has a default. Compose refuses to start on an unset variable and the config loader
-raises with the variable's name, so a half-filled `.env` fails loudly instead of quietly
-connecting somewhere unintended.
-
-One command, end to end, with a fault injected while it runs:
+Then the 60-second version — produce, detect, reconcile, remediate, and see it:
 
 ```bash
-python demo.py            # ~90 s: produce, pause the broker mid-stream, reconcile, detect, remediate
+python demo.py                                       # one command, end to end
 ```
 
-It produces a labelled scenario with deploy markers, **pauses the Kafka broker for 8 seconds
-while the producer is running**, reconciles the stream against the broker's own offsets,
-detects with conditioning on, and hands the sharpest episode to the safety-gated agent. Then
-it prints each claim and whether it held, and exits non-zero if any did not. A recent run:
-
-```
-  [ok] produced: delivered 48,002  failed 0
-  [ok] reconciliation reports zero drift: 48,000 readings across 8 channels | drift 0
-  [ok] broker offset audit agrees: 48,000 retained | consumed 48,000 | offset drift +0
-  [ok] a fault was injected while the stream ran: broker paused for 8s mid-production
-  [ok] episodes were raised: 8 episodes, sharpest peak 74.5 on pump-00.vibration_mm_s
-  [ok] conditioning recorded a verdict for every episode: 8 decided against 8 episodes
-  [ok] every agent action passed the safety gate: 4 actions on episode 4
-  7/7 claims held
-```
-
-It runs in its own Postgres schema and drops it afterwards, so it neither reads nor deletes
-anything else. `--keep` leaves the schema behind and prints how to point the dashboard at it.
-
-Or drive the pieces yourself, in three terminals:
+Or drive it yourself, one process per concern:
 
 ```bash
-# 1. the detection spine
-python detector.py --from-beginning
-
-# 2. a source -- either the synthetic harness...
-python loadgen.py --rate 600 --duration 420 --scenario --write-plan docs/results/plan.json
-
-#    ...or the live public solar-fleet feed
-python mqtt_bridge.py --topic inverters
-
-# 3. the dashboard, at http://127.0.0.1:8000
-python -m uvicorn vigil.api:app --port 8000
+python loadgen.py --rate 350 --duration 300 --channels 6 --scenario   # synthetic source
+python detector.py --conditioning                                     # windows, scores, episodes
+python warehouse.py --no-scores                                       # readings -> ClickHouse
+python lake.py                                                        # readings -> Iceberg
+python reconciler.py --audit-lake                                     # prove nothing was lost
+python -m uvicorn vigil.api:app --port 8000                           # dashboard
 ```
 
-Reproduce the measurements. Each writes its raw result under `docs/results/` and each
-number in this README came from one of them:
+`docker compose up` does **not** start Flink — its 2.5 GB does not fit beside the rest on an
+8 GB Docker VM, which is the one combination this stack cannot run at once. Bring it up
+deliberately with `docker compose --profile flink up -d --build`.
+
+Everything else:
 
 ```bash
-# producer throughput, blast mode
-python loadgen.py --rate 0 --duration 30 --channels 32
-
-# consumer throughput against parallelism -- the curve in docs/SCALE.md
-python scale.py --fill 300000 --parallelism 1,2,3,4,6,8 --report-json docs/results/scale-sweep.json
-
-# reconciliation: per-channel sequence identity plus an independent broker-offset audit
-python reconciler.py --from-beginning --stop-after-idle-s 12
-
-# the chaos suite: four fault modes, each required to prove it disrupted something
-python chaos.py --all --report-json docs/results/chaos.json
-
-# the paired evaluation: shadow, conditioned and fail-open passes over byte-identical data
-python evaluate.py --duration 900 --rate 400 --channels 12     --deploys-per-hour 60 --faults-per-hour 120     --report-json docs/results/paired.json
-
-# the labelled benchmark, detector against baseline
-python benchmark.py --report-json docs/results/benchmark.json
-```
-
-Tests:
-
-```bash
-python -m pytest                       # all 524, needs docker compose up for the integration ones
-python -m pytest -m "not integration"  # unit only
+python -m pytest                        # 697 tests; integration ones need compose up
+python -m pytest -m "not integration"   # unit only
+python chaos.py                         # the fault suite
+python evaluate.py                      # the paired conditioning measurement
+python benchmark.py                     # detector vs baseline on TSB-AD-M
+python scripts/validate_deploy.py       # k8s, terraform and monitoring configs
 ```
 
 ---
 
-## Data
+## How it works
 
-Two sources for two jobs, because a live stream has no answer key.
+**Ingestion.** A synthetic generator or a live public MQTT solar-fleet feed. Every reading
+carries a per-channel sequence number assigned at the boundary — that number is the identity
+everything downstream checks invariants against, because counting messages cannot tell
+"processed a million events" from "processed one event a million times". The feed publishes
+no history API, so the edge guarantee is **at-most-once** and says so (ADR-011).
 
-**Live (the showcase).** The public TDengine solar-fleet MQTT feed,
-`mqtt.tdengine.com:1883`, anonymous, QoS 0. Chosen over a market-data stream for one reason:
-it publishes *expected* alongside *actual* power, so detection runs on a residual with
-physical meaning rather than an arbitrary threshold -- and it carries the real operational
-context (curtailment, soiling, alarms, weather) the conditioning layer will consume.
+**Kafka.** Keyed by channel, so a channel's readings land in one partition and stay ordered.
+Topics are created explicitly; auto-create is off, because it turns a topic-name typo into a
+silently empty stream.
 
-Detection runs on that residual, not on raw output. Generation collapses every evening
-across the whole fleet, so a value-only detector on raw power reads sunset as a fleet-wide
-incident; the residual sits near zero at noon and near zero at midnight. Raw power is still
-published as its own channel deliberately, as the control that shows what the unconditioned
-detector does at sunset.
+**Flink.** Event-time windows with per-channel watermarks, RocksDB state, and **exactly-once
+via two-phase commit** — source offsets in the checkpoint, sink writes in a Kafka transaction
+committed on checkpoint completion. Verified by killing the TaskManager mid-checkpoint and
+counting duplicates on the other side: zero.
 
-**Labelled (the proof).** TSB-AD-M: 200 labelled multivariate series, fetched on demand by
-`python scripts/fetch_tsb_ad.py`. Scored with threshold-independent, time-aware measures --
-**never point-adjusted F1**, which is the specific inflation TSB-AD exists to expose
-(ADR-013). Our numbers will therefore look worse than papers that point-adjust, and are not
-comparable to them.
+**Detection.** Two detectors over the same windows: a rolling z-score on the hot path
+(**0.493 ms p99** against a 250 ms budget) and a zero-shot Chronos-Bolt foundation model
+off it (34.8 ms p99, not bound by that budget). Consecutive flagged
+windows merge into one episode, because an operator is paged once per incident.
+
+**Conditioning — the contribution.** The reconciliation harness emits a per-window pipeline
+health signal, and deploy markers arrive on the same wire. An episode overlapping a proven
+disturbance is *attributed* to it rather than paged. The policy can only ever refuse: it
+removes attributions and never adds them, and it fails open when the signal is missing
+(ADR-007), because missing context must not hide a real anomaly.
+
+**Agent.** Diagnoser → Planner → Safety Gate → Executor on a sandbox, grounded in runbook
+retrieval. The gate never reads the planner's rationale and has the last word. The planner
+is a QLoRA fine-tune of Qwen2.5-7B; the gate is unchanged either way, which is the point of
+putting the authority in the gate.
+
+**Storage.** Postgres holds episodes and app state, ClickHouse serves readings and window
+scores, Iceberg on MinIO is the durable record and what reconciliation audits against.
+Nothing is mirrored between them, so no query has to decide which copy to believe.
+
+---
+
+## What makes this senior
+
+Not the stack. The stack is a list anyone can copy. These are the parts that took judgement.
+
+**A five-run investigation that ended in a negative result, published.** The core claim —
+that conditioning on pipeline health cuts false pages — was measured seven times and
+**missed its target every time**. The path is in [EVALUATION](docs/EVALUATION.md) section 3:
+
+- **v1** suppressed by co-occurrence: +60.9% reduction, −36.7% recall. It scored well by
+  muting real faults during deploys, which is the exact cheat the generator schedules a
+  quiet-deploy population to catch. It got caught.
+- **v2** required synchrony, and the test was **invalid**: episode start times are window
+  boundaries quantised to a 10 s slide, so a 5 s tolerance could only ever match an exact
+  tie. Recorded as a blocker against my own result.
+- **v3** fixed the onset (ADR-035) and the numbers moved the right way — and still missed.
+- **v4** found the root cause was **distributed-systems, not statistical**: the corroboration
+  test was deciding before its evidence arrived (G-7), and recording a verdict it had not
+  reached (G-16), which is why four published runs all reported `isolated=0`.
+- **v4a** was the control — same policy, evidence actually present — and made things *worse*
+  in the expected direction, which is what ADR-038 was built to answer.
+
+Then the part I am most willing to defend: **B-6 showed the 40% target was arithmetically
+unreachable on that run.** 75 of 112 false pages overlapped no injected artifact at all, so
+the ceiling was 37/112 = **33%** even for a perfect discriminator. The obvious move was to
+redefine the denominator to the attributable subset, which would have made the headline pass.
+I wrote the option down, recommended nothing, and **left the target as missed** — changing a
+metric after five failures to hit it needs a better reason than "the old one was
+unflattering".
+
+**Honest benchmarking against my own thesis.** The project is built around a foundation-model
+detector. The benchmark says a rolling z-score beats it on this corpus at 141x less compute,
+and that finding is in the README above rather than buried. Where Chronos *does* win is named
+too, because "I measured where the trendy method is the wrong tool" is a stronger result than
+an unexamined win.
+
+**Refusing to fake the deployment layer.** Phase 6 produced validated Kubernetes manifests,
+Terraform and monitoring — and three deliberate absences:
+
+- **No agent Deployment.** There is no long-running agent in this repo; `RemediationAgent` is
+  a library. Writing a daemon to deploy would be building a new component under the heading
+  of deploying an existing one. What ships is a CronJob for the quality gate, which is real.
+- **No cloud provider in Terraform.** An `aws_eks_cluster` block would be the most
+  impressive-looking file here and the least honest — nothing in it would ever have run.
+- **No probes on the four consumers.** `exec: true` is decoration and probing Kafka turns a
+  broker outage into a crash-loop. The gap is documented in three places instead.
+
+**Bugs found by running it, not by reading it.** The ClickHouse rollup silently double-counted
+a replayed batch, because a materialized view never sees the `ReplacingMergeTree` dedupe that
+happens later at merge time. And `(channel, seq)` turned out not to be unique across producer
+restarts — which would have had ClickHouse delete a real reading at merge time and report it
+as a successful dedupe. Both are [ADR-046](docs/DECISIONS.md) and both narrowed a claim that
+`CORRECTNESS.md` had been stating without qualification.
+
+---
+
+## What is not true yet
+
+- **NFR-8 is missed.** Seven measurements, best +18.9% / −3.3% against a 40% / ≈0 target.
+- **The Kubernetes layer has never run.** 25 resources, all schema-valid, **zero pods ever
+  scheduled**. [DEPLOYMENT](docs/DEPLOYMENT.md) section 6 lists what that leaves unproven.
+- **The VLM explainer has never called a model.** Built against Claude with 40 tests, none of
+  which touch the network, because no `ANTHROPIC_API_KEY` exists here. NFR-2's 5 s budget is
+  unmeasured.
+- **CI has never run on a runner.** No remote; every step passes locally.
+- **Single broker, replication factor 1.** No leader election, no ISR shrink. Recovery times
+  do not project to a cluster.
+
+The full list is [BLOCKERS](docs/BLOCKERS.md) — 16 known gaps, kept because a document that
+omits them would flatter itself.
 
 ---
 
 ## Documentation
 
-| File | What it holds |
+| Document | What it holds |
 |---|---|
-| `docs/PROGRESS.md` | Status board, work log, error log, and the exact next action |
-| `docs/DECISIONS.md` | 31 ADRs -- what was decided, what was rejected, what it cost |
-| `docs/CORRECTNESS.md` | The guarantee at each boundary, and what it does not cover |
-| `docs/EVALUATION.md` | Methodology, measured numbers, and the metrics deliberately refused |
-| `docs/BLOCKERS.md` | Anything deferred, stubbed, or needing a human |
-| `docs/ARCHITECTURE.md` | Design and the core mechanism |
-| `docs/PROJECT_PLAN.md` | Full spec, stack, phases, and the prior-art review |
+| [PROJECT_PLAN](docs/PROJECT_PLAN.md) | The spec this was built against |
+| [ARCHITECTURE](docs/ARCHITECTURE.md) | Components, data flow, both deployment topologies |
+| [CORRECTNESS](docs/CORRECTNESS.md) | The guarantee per boundary, and what is *not* covered |
+| [EVALUATION](docs/EVALUATION.md) | Every measurement, including the losses |
+| [CHAOS](docs/CHAOS.md) | Fault injection and recovery evidence |
+| [SCALE](docs/SCALE.md) | Throughput and the parallelism curve |
+| [DECISIONS](docs/DECISIONS.md) | 49 ADRs: what, why, what was rejected |
+| [BLOCKERS](docs/BLOCKERS.md) | Open questions, deferrals, and every known gap |
+| [DEPLOYMENT](docs/DEPLOYMENT.md) | How to apply the K8s layer, and what is unverified |
+| [PROGRESS](docs/PROGRESS.md) | Status board and a dated work log |
 
 ---
 
 ## Honesty rules held throughout
 
-Every number states the hardware and the command that produced it. A target that is missed
-is reported as missed. Losses are reported as prominently as wins. "Not yet measured" is
-used rather than an estimate, and a component that is not built is absent rather than
-stubbed to look present -- which is why the dashboard has no reconciliation panel yet and
-says so.
+- A number appears only after a command produced it, with the hardware named.
+- A missed target is reported as missed, never quietly re-scoped afterwards.
+- Losses get the same prominence as wins.
+- "Not yet measured" is used rather than an estimate.
+- If a thing is not built, it is absent — not stubbed and described as working.
+
+**Reference hardware for every number here:** Intel Core i7-12650H (10 cores / 16 threads),
+15.6 GB RAM, RTX 3050 Ti Laptop (4 GB VRAM), Windows 11, Docker Desktop with 8.1 GB allocated,
+Python 3.12. One exception, named where it appears: the QLoRA planner trained and was scored
+on a Northeastern Explorer V100-SXM2-32GB, because a 7B adapter does not fit in 4 GB.
