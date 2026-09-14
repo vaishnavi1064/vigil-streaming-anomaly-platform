@@ -6,7 +6,9 @@
 
 **Reference hardware** (every measured number in this repo was taken here):
 Intel Core i7-12650H, 10 cores / 16 threads, 15.6 GB RAM, NVIDIA RTX 3050 Ti Laptop (4 GB VRAM),
-Windows 11, Docker Desktop, Python 3.12.10.
+Windows 11, Docker Desktop, Python 3.12.10. **One exception:** the QLoRA planner training and
+eval ran on Northeastern Explorer, one V100-SXM2-32GB, because a 7B adapter does not fit in
+4 GB of VRAM. Those numbers say so where they appear.
 
 ---
 
@@ -21,7 +23,7 @@ Phases are from `BUILD.md` section 7; stories from `docs/USER_STORIES.md`.
 | 2 | Correctness and resilience: Flink, event-time, 2PC exactly-once, reconciliation harness, chaos suite, scale harness | Zero reconciliation drift over a long run; >=3 faults recover with bounded lag; throughput-vs-parallelism curve | **Gate met.** 5/5 faults recovered with proven disruption, including the Flink checkpoint-recovery run; curve produced and the plateau named; **drift 0 over 240.0 minutes and 5,749,412 readings**, meeting NFR-6. The soak's broker audit shows +77 from a shutdown boundary, explained in `docs/CORRECTNESS.md` section 4a (G-14) |
 | 3 | The core contribution: context-conditioned detection + ClickHouse + Iceberg | Measured false-positive reduction vs. the unconditioned baseline; fail-open verified | **Gate clauses satisfied; the requirement behind them is not met, and that is now a settled result rather than an open question.** Four measurements published (+60.9%/-36.7%, +9.0%/-10.0%, +6.7%/-6.7%, **+11.1%/-6.7%**); fail-open verified live twice, 73/73 and 76/76. **NFR-8 missed in all four.** The plausibility half works in every run (69 of 76 raised as implausible); the corroboration half is too weak. ClickHouse/Iceberg not started |
 | 4 | Explanation and agent (thin) | Flagged anomaly explained; propose -> gate -> sandbox execute; trace persisted | **Mostly done.** Closed action set, deterministic gate, sandbox, runbook RAG, full loop -- 98 tests. VLM explanation not started |
-| 5 | Evaluation and CI | Honest benchmark incl. losses; DeepEval gate fails the build on regression | **Gate met, with one substitution.** 200-series benchmark run and published including the loss: the foundation model is beaten by the z-score baseline at 141x the cost, and where it does win is named. Quality gate runs in CI and fails on floors or baseline drift -- but it is structural, not LLM-judged, since Ragas/DeepEval need a key (C-2). QLoRA fine-tune paused on B-3 |
+| 5 | Evaluation and CI | Honest benchmark incl. losses; DeepEval gate fails the build on regression | **Gate met, with one substitution, and the fine-tune is now done.** 200-series benchmark run and published including the loss: the foundation model is beaten by the z-score baseline at 141x the cost, and where it does win is named. **The QLoRA planner trained on the Explorer cluster and beat the baseline: 97.7% exact-match against 20.0% for the generous rules and 0.0% for the rules as deployed, with forbidden actions down from 61.3% to 1.0%** (`docs/EVALUATION.md` section 6). Quality gate runs in CI and fails on floors or baseline drift -- but it is structural, not LLM-judged, since Ragas/DeepEval need a key (C-2) |
 | 6 | Production wrapper and polish | One-command bring-up; README + diagram + demo | Not started |
 
 ### Story board
@@ -44,7 +46,7 @@ Phases are from `BUILD.md` section 7; stories from `docs/USER_STORIES.md`.
 | H2 | Chaos suite | **Done** - 5 fault modes including the Flink checkpoint-recovery scenario, all broke 20/20 serviceability samples, all recovered within the 60s budget, drift 0 verified by independent replay. `docs/CHAOS.md`. 18 unit tests |
 | I1 | Honest detection benchmark | **Done, and the foundation model lost.** 144 of 200 series scored (56 dropped by truncation, stated): zscore median AUC-PR 0.198 against chronos-bolt-tiny 0.152, head to head 78/56/10, at **141x less compute**. The regime boundary is named: the model wins where normal is structured and non-stationary (Exathlon 19-8) and loses where an anomaly is a sharp excursion against a flat baseline (SVDB 21-1) |
 | I2 | CI quality gate | **Done for what is measurable without a judge.** CI runs lint, format, unit, integration, a secret scan, repo-standards checks, and `agent_quality.py`: grounding, gate approval, sandbox containment, safety compliance and abstention as rates over 400 episodes, failing on a broken floor or on drift below a committed baseline. 11 tests, most of which break the agent on purpose. Ragas/DeepEval need an LLM judge and a key (C-2) |
-| I3 | Tool-calling fine-tune | **Task reshaped, pipeline built, not trained.** The first set could not beat the rules by construction (B-3); the hard set withholds the label, uses shapes `Diagnoser` misclassifies, and states held-out licences in prose. Measured gap on 300 held-out cases: rules score **0% as deployed**, **20% given licence sets they could not parse**, forbidden action on 61%. QLoRA config, training script and eval complete; `--dry-run` passes against the real tokenizer. **Needs a GPU run** |
+| I3 | Tool-calling fine-tune | **Done, and the model won.** Trained on Northeastern Explorer (V100-SXM2-32GB, QLoRA 4-bit, fp16, 75 steps, 34.6 min, final loss 0.034) and scored on the same 300 held-out cases as the rules: **97.7% exact-match (293/300) against 20.0% for the generous baseline and 0.0% for the rules as deployed**, forbidden actions 1.0% against 61.3%, 0 schema-invalid and 0 ungrounded across 300 plans. slow_drift -- the one symptom the rules get right -- stays 60/60, so the model learned the teacher's policy rather than the complement of the baseline. Not zero-harm (3 forbidden proposals, gate-invisible) and not yet wired into the running agent. `docs/EVALUATION.md` section 6 |
 
 ---
 
@@ -52,6 +54,7 @@ Phases are from `BUILD.md` section 7; stories from `docs/USER_STORIES.md`.
 
 | When | Commit | What |
 |---|---|---|
+| 2026-09-13 | (this commit) | **B-3 answered: the QLoRA planner beat the deterministic one.** Trained on Northeastern Explorer (V100-SXM2-32GB, NF4 + fp16, LoRA r=32, 1 epoch, 75 steps, 34.6 min, final loss 0.034, no NaN) and scored on the same 300 held-out cases as both baselines: **97.7% exact-match (293/300) against 20.0% given licences and 0.0% as deployed**, forbidden actions **1.0% against 61.3%**, and 0 schema-invalid / 0 unknown verbs / 0 ungrounded actions across 300 plans. The win is on the four symptoms the rules score 0/60 on; `slow_drift`, the one they get right, stays 60/60, which is the control against a model that learned to disagree rather than to plan. Three forbidden proposals remain and the safety gate rejected none of them -- symptom appropriateness is outside what it checks. Published as `docs/EVALUATION.md` section 6 with the limits attached: hand-written teacher ceiling, one generator for both splits, one seed, and 15.8 s p50 per plan. ADR-039, ADR-040. |
 | 2026-09-05 | `67630bb` | **Phase 1 gate passed.** Wrote `docs/CORRECTNESS.md` (guarantee per boundary + what is not covered), filled `docs/EVALUATION.md` sections 5.1a-5.1d with measured numbers, wrote `README.md`. |
 | 2026-09-05 | `4e55212` | **Phase 2 started.** Reconciliation harness: per-channel sequence identity, independent broker-offset audit, per-window health signal on the context topic. Chaos suite: 4 fault modes with recovery verified by independent replay. Scale harness: parallelism sweep over a fixed pre-filled backlog. |
 | 2026-09-06 | `f011835` | **Chaos verified** (4/4, disruption proven), `docs/CHAOS.md`, the paired evaluation harness (`evaluate.py`), and conditioning wired into the detector behind `--conditioning`. |
@@ -168,14 +171,20 @@ ADRs live in `docs/DECISIONS.md`. Design-phase ADR-001..008 predate this build.
 | 036 | The fine-tune's task is reshaped rather than dropped, with the teacher named as the ceiling | 5 |
 | 037 | A conditioning verdict waits behind an event-time barrier, and the evidence is recorded when it exists | 3 |
 | 038 | Attribution requires the shape of a blast radius, not only the timing of one | 3 |
+| 039 | Completion-only masking via collator, fp16 on V100, and a memory-safe resumable eval | 5 |
+| 040 | Out-of-set symptoms and prose licences are what made the fine-tune winnable | 5 |
 
 ---
 
 ## 5. Next up
 
-**Waiting on the architect:** B-3 needs a **GPU run on the university cluster** -- the task is
-reshaped, the pipeline is built and dry-run verified, and the exact four-command run plus the
-hardware requirement are in `docs/BLOCKERS.md`. B-5 needs a decision on whether NFR-3 is
+**B-3 is done and the fine-tune won.** Trained on Northeastern Explorer and scored against both
+baselines on the 300 held-out hard cases: **97.7% exact-match against 20.0% and 0.0%**, forbidden
+actions **1.0% against 61.3%**, and `slow_drift` -- the control symptom the rules get right --
+held at 60/60. `docs/EVALUATION.md` section 6, ADR-039 and ADR-040. What remains is deployment,
+not training: the adapter is not wired into `RemediationAgent`, so the rules still plan.
+
+**Waiting on the architect:** B-5 needs a decision on whether NFR-3 is
 restated or the window geometry changes. **B-6 is new and is the one that matters**: on the
 v4w run only 37 of 112 false pages overlap an injected excursion, so the 40% reduction target
 had a ceiling of 33% before the policy decided anything. Redefining the denominator, fixing
@@ -197,10 +206,13 @@ published side by side in `docs/EVALUATION.md` sections 3.4 to 3.11.
 
 **Then, in rough priority order:**
 
-1. Re-run the benchmark without truncation, so the 56 late-onset series are not excluded
+1. Serve the adapter and wire it behind the `Planner` protocol, which is what reverses D-6.
+   The gate, the sandbox and the runbook grounding are unchanged either way; what needs
+   measuring is served latency, since 15.8 s p50 on 4-bit sequential generation is not it.
+2. Re-run the benchmark without truncation, so the 56 late-onset series are not excluded
    (est. 4+ h of CPU).
-2. Multi-hour soak for NFR-6. Must run after chaos and scale.
-3. VLM explanation (blocked on C-2, needs a key), ClickHouse and Iceberg, Terraform and K8s.
+3. Multi-hour soak for NFR-6. Must run after chaos and scale.
+4. VLM explanation (blocked on C-2, needs a key), ClickHouse and Iceberg, Terraform and K8s.
 
 ## 6. Phase 1 gate evidence
 
