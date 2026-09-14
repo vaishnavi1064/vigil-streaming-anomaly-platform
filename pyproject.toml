@@ -11,6 +11,9 @@ dependencies = [
     "paho-mqtt>=2.1",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
+    # The serving store (ADR-006). Core rather than optional: the dashboard API's metrics
+    # endpoints have nowhere else to read from, and a pure-HTTP client is a small dependency.
+    "clickhouse-connect>=0.8",
 ]
 
 [project.optional-dependencies]

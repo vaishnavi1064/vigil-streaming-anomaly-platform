@@ -18,8 +18,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 
 from vigil.api.dashboard import DASHBOARD_HTML
-from vigil.settings import PostgresSettings
+from vigil.settings import ClickHouseSettings, PostgresSettings
 from vigil.store import EpisodeStore
+from vigil.warehouse import ReadingsWarehouse
 
 app = FastAPI(
     title="Vigil",
@@ -36,9 +37,25 @@ def _store() -> EpisodeStore:
     return EpisodeStore(PostgresSettings.from_env())
 
 
+def _warehouse() -> ReadingsWarehouse:
+    """The serving store. Separate from `_store` because they answer different questions.
+
+    Postgres holds episodes and app state and stays their source of truth; ClickHouse holds
+    the high-volume readings and window scores that no transactional store should be asked
+    to aggregate (ADR-006, ADR-045). Nothing is mirrored between them, so no endpoint has to
+    decide which copy to believe.
+    """
+    return ReadingsWarehouse(ClickHouseSettings.from_env())
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
-    """Per-service status. Postgres is checked by using it, not by assuming it."""
+    """Per-service status. Each store is checked by using it, not by assuming it.
+
+    Reported per store rather than as one flag: ClickHouse being down costs the serving
+    panels and costs episodes nothing, and a single "healthy: false" would hide which half
+    of the split is actually broken.
+    """
     status: dict[str, Any] = {"uptime_s": round(time.time() - _STARTED, 1)}
     try:
         with _store() as store:
@@ -46,7 +63,18 @@ def health() -> dict[str, Any]:
             status["episodes"] = store.episode_count()
     except Exception as exc:  # noqa: BLE001 - health must report failure, not raise it
         status["postgres"] = "down"
-        status["error"] = str(exc)
+        status["postgres_error"] = str(exc)
+    try:
+        with _warehouse() as warehouse:
+            status["clickhouse"] = "up"
+            # Rows stored, not distinct readings, and named so it cannot be read as the
+            # latter: this counts pre-merge duplicates from any replay, so it is routinely
+            # larger than /metrics' figure. Getting the distinct count here would mean
+            # paying for FINAL on every health poll.
+            status["reading_rows"] = warehouse.reading_count()
+    except Exception as exc:  # noqa: BLE001 - same rule for the serving store
+        status["clickhouse"] = "down"
+        status["clickhouse_error"] = str(exc)
     return status
 
 
@@ -180,6 +208,61 @@ def reconciliation(windows: int = 60) -> dict[str, Any]:
         "disturbed_windows": sum(n for s, n in by_severity.items() if s != "ok"),
         "has_evidence": latest is not None,
     }
+
+
+@app.get("/metrics")
+def metrics() -> dict[str, Any]:
+    """Per-channel telemetry rollups, served from ClickHouse.
+
+    This is the query the storage split exists for: a per-channel summary over every reading
+    ever ingested, answered from the per-minute aggregate rather than by scanning the raw
+    table. `readings` counts distinct sequence numbers, so a replayed batch does not inflate
+    it -- the count is right before the underlying parts have merged, not only after.
+    """
+    with _warehouse() as warehouse:
+        channels = warehouse.channels()
+    for row in channels:
+        for key in ("first_minute", "last_minute"):
+            if row.get(key) is not None:
+                row[key] = row[key].isoformat()
+        # The identity invariant the reconciliation harness checks, computed here so the
+        # panel shows whether the lake and the serving store agree with the ledger.
+        row["seq_span"] = row["seq_max"] - row["seq_min"] + 1
+        row["gap"] = row["seq_span"] - row["readings"]
+    return {
+        "channels": channels,
+        "readings": sum(r["readings"] for r in channels),
+        "channel_count": len(channels),
+    }
+
+
+@app.get("/metrics/{channel}")
+def channel_series(channel: str, minutes: int = 60) -> dict[str, Any]:
+    """Per-minute series for one channel: the dashboard's time-series panel."""
+    with _warehouse() as warehouse:
+        points = warehouse.series(channel, minutes=max(1, min(minutes, 1440)))
+    if not points:
+        raise HTTPException(status_code=404, detail=f"no readings for channel {channel}")
+    return {
+        "channel": channel,
+        "points": [{**p, "minute": p["minute"].isoformat()} for p in points],
+        "count": len(points),
+    }
+
+
+@app.get("/scores")
+def window_scores() -> dict[str, Any]:
+    """Per-detector window-score distribution from ClickHouse.
+
+    Distinct from `/detectors`, which reports episodes and hot-path latency out of Postgres.
+    This one is over every scored window, including the overwhelming majority that raised
+    nothing -- the population an episode table by definition does not contain.
+
+    Latency is deliberately absent: the only producer on the scores topic is the Flink job,
+    which reports none, and the hot-path percentiles come from `/detectors` instead.
+    """
+    with _warehouse() as warehouse:
+        return {"detectors": warehouse.detector_scores()}
 
 
 @app.get("/context")

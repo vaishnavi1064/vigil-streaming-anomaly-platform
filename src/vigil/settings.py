@@ -112,6 +112,67 @@ class MqttSettings:
 
 
 @dataclass(frozen=True)
+class ClickHouseSettings:
+    """The serving store (ADR-006, ADR-045).
+
+    Required like Kafka and Postgres, not optional like the explainer: the dashboard's
+    serving reads have nowhere else to go, so a missing variable here should stop the
+    process with its name rather than start an API that returns empty panels.
+    """
+
+    host: str
+    http_port: int
+    user: str
+    password: str
+    database: str
+    connect_timeout_s: int = 10
+
+    @classmethod
+    def from_env(cls) -> ClickHouseSettings:
+        load_env()
+        return cls(
+            host=required("CLICKHOUSE_HOST"),
+            http_port=required_int("CLICKHOUSE_HTTP_PORT"),
+            user=required("CLICKHOUSE_USER"),
+            password=required("CLICKHOUSE_PASSWORD"),
+            database=required("CLICKHOUSE_DB"),
+        )
+
+
+@dataclass(frozen=True)
+class LakeSettings:
+    """The Iceberg lake: a JDBC catalog in Postgres, data files on MinIO (ADR-043)."""
+
+    s3_endpoint: str
+    access_key: str
+    secret_key: str
+    bucket: str
+    namespace: str
+    catalog_uri: str
+
+    @property
+    def warehouse(self) -> str:
+        return f"s3://{self.bucket}"
+
+    @classmethod
+    def from_env(cls) -> LakeSettings:
+        load_env()
+        pg = PostgresSettings.from_env()
+        return cls(
+            s3_endpoint=required("LAKE_S3_ENDPOINT"),
+            access_key=required("MINIO_ROOT_USER"),
+            secret_key=required("MINIO_ROOT_PASSWORD"),
+            bucket=required("LAKE_BUCKET"),
+            namespace=required("LAKE_NAMESPACE"),
+            # The catalog is a set of tables in the application database. pyiceberg speaks
+            # SQLAlchemy here, which wants the psycopg driver named explicitly.
+            catalog_uri=(
+                f"postgresql+psycopg://{pg.user}:{pg.password}@{pg.host}:{pg.port}/{pg.database}"
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class VlmSettings:
     """The hosted explainer endpoint (ADR-004, B-1).
 
