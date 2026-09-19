@@ -395,7 +395,17 @@ def score_pass(
 
 
 def classify(observed: ObservedEpisode, truth: GroundTruth, slack_ms: int = 30_000) -> str:
-    """What this episode actually was, by the plan written before anything scored it."""
+    """What this episode actually was, by the plan written before anything scored it.
+
+    A real fault takes precedence over an overlapping artifact, which is the **opposite** of
+    the precedence `score_pass` uses for the false-page count. Deliberate, and the two views
+    have to be read together: `score_pass` is counting whether an operator should have been
+    woken, so an episode that overlaps a deploy artifact is a false page whatever else was
+    happening on that channel. This is answering whether a suppression destroyed evidence of
+    something real, and there a fault underneath an artifact is the case that matters most.
+    An episode overlapping both is therefore `fault` here and `artifact` there, and the gap
+    between the two tables is exactly that population.
+    """
     if any(
         f.channel == observed.channel
         and f.overlaps(observed.t_start_ms, observed.t_end_ms, slack_ms=slack_ms)

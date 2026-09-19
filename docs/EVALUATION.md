@@ -726,6 +726,178 @@ detector, which is a detection problem rather than a conditioning one.
 **NFR-8 is reported as not met.** The pair is +18.9% / -3.3% at 12 channels and +3.6% /
 -3.3% at 24, against +40% / -5%.
 
+### 3.12 v6a -- the second detector's opinion, which is the first signal that needs no external cause
+
+Every policy in sections 3.4 to 3.11 explains an episode by pointing at an operational event,
+and B-6 is the arithmetic that bounds them: on the v4w run **75 of 112 false pages overlap no
+injected excursion at all**. Nothing in the context topic knows anything about those, so no
+discriminator over deploy markers and pipeline health can reach them however good it is. That
+population is a property of the detector, not of the policy, and it is what v6 attacks.
+
+The platform already runs a second detector on the same windows -- Chronos-Bolt forecast
+residuals, off the critical path (ADR-017) -- and section 4 establishes that the two fail
+*differently* rather than one dominating: over 144 series the z-score wins 78 and loses 56. So
+an episode one detector raises that the other watched and could not see is more likely a
+property of that detector than of the world. That question needs no deploy and no pipeline
+event to answer, which is the whole point (ADR-050).
+
+**What deliberately did not change.** The second detector raises no episodes in this role. It
+changes no threshold and appears nowhere in the episode population; the z-score baseline is
+still the only thing that pages anyone. The shadow pass runs the baseline alone, exactly as in
+v1-v4w, and recorded **76 episodes -- the same count as v4's shadow pass**, with ground truth
+identical to v4's (30 fault incidents over 57 channel-episodes, 43 artifacts, 11 deploy
+windows). The plausibility half and the blast-radius test are untouched, and the safety gate
+was not involved at all.
+
+**What did change, besides the signal.** The verdict barrier now waits on the second detector's
+own progress as well as the fleet watermark (ADR-051). It has to: on a replay the consumer
+advances event time far faster than a batched model on a CPU can follow, so deciding on the
+fleet watermark alone would read "has not scored this window yet" as "scored it and found
+nothing" -- G-7 exactly, one evidence source along, and in the direction that suppresses. The
+ablation pass therefore **runs the model and waits on the same minimum**, and is forbidden only
+from acting on what it heard. That is what makes the ablation an isolation rather than a
+comparison, and it is why the ablation is the right control for this measurement and v4's
+published number is not.
+
+Run `47cd90b4`, **same command, same seed, same density as v4**:
+
+```
+python evaluate.py --duration 900 --rate 400 --channels 12 \
+    --deploys-per-hour 60 --faults-per-hour 120 --second-opinion \
+    --report-json docs/results/paired-evaluation-v6a-second-opinion.json
+```
+
+| Measure | Shadow | Conditioned | Delta |
+|---|---|---|---|
+| Episodes recorded | 76 | 76 | |
+| Pages raised | 76 | 62 | -14 |
+| Attributed (not paged) | 0 | 14 | |
+| False pages (artifact + unexplained) | 50 | 38 | **-12** |
+| of which artifact-driven | 30 | 28 | -2 |
+| of which **unexplained** | 20 | **10** | **-10** |
+| Recall, all real faults (incidents) | 93.3% (28/30) | 93.3% (28/30) | **+0.0%** |
+| Recall, faults **outside** windows | 87.5% (14/16) | 87.5% (14/16) | **+0.0%** |
+| Recall, faults **inside** windows | 100.0% (14/14) | 100.0% (14/14) | **+0.0%** |
+| Recall, faults in **quiet** windows | 100.0% (7/7) | 100.0% (7/7) | **+0.0%** |
+| Recall, per fault channel-episode | 89.5% (51/57) | 86.0% (49/57) | **-3.5%** |
+| Precision (incident-level) | 34.2% | 38.7% | +4.5% |
+
+**false-positive reduction +24.0% (target >= 40%, missed) -- recall loss +0.0%
+(tolerance <= 5%, MET). NFR-8 NOT MET.**
+
+Fail-open held: **76 of 76** episodes identical to the unconditioned pass, `no_context=76`.
+Scoped exactly as before, and now narrower on purpose: that pass runs context-conditioning
+*alone*, because ADR-007's promise is about the context signal and a check on two mechanisms
+at once cannot say which of them held. The second detector's own abstention rule is covered by
+unit tests in `tests/test_second_opinion.py` instead.
+
+#### The ablation, which is the actual measurement
+
+Same run, byte-identical records, the second detector running and waited for in both passes,
+and allowed to change a decision in only one of them.
+
+| Same records, same run | FP reduction | Recall loss (incidents) | Attributed | Fault channel-episodes kept |
+|---|---|---|---|---|
+| second detector **advisory** (the v4 policy) | **+6.0%** | **+0.0%** | 3 of 76 | 51/57 |
+| second detector **acting** | **+24.0%** | **+0.0%** | 14 of 76 | 49/57 |
+
+**The signal is worth 18.0 points of false-positive reduction at zero incident-level recall
+loss.** That is the largest contribution any single mechanism has made across nine
+measurements, and it is the first one to come without a recall bill at the unit NFR-8 is
+written in. It is also not enough: the target is 40% and this is 24%.
+
+The verdict record says what each half did:
+
+```
+advisory:  corroborated=3, fault_domain=1, implausible=39, isolated=31, narrow_blast_radius=2
+acting:    corroborated=1, fault_domain=1, implausible=28, isolated=29, narrow_blast_radius=2,
+           second_opinion_agrees=2, second_opinion_dissents=13
+```
+
+Thirteen suppressions from dissent, and **two attributions vetoed by agreement** -- 3 - 2 + 13
+= 14, which is the attributed column. The veto is the interesting pair of the two: of the three
+episodes the v4 policy attributed to a deploy, agreement pulled back one that **overlapped a
+real fault** and one that was a genuine artifact. It bought a real fault back for one false
+page, which is the trade it exists to make, and it is the reason the veto is on by default.
+
+#### What the second detector actually saw, and where the line was drawn
+
+```
+second detector (chronos-bolt-tiny) over 76 decisions at agreement 3:
+  abstained=15, agrees=47, dissents=14
+agreement sensitivity over 70 scored spans (bar:agreeing)
+  1:70  2:66  3:47  4:38  6:25  8:14 | peak p50 4.1  p90 10.2  max 19.3
+```
+
+Two things in that block matter more than the headline.
+
+**The model had no opinion on 15 of 76 episodes, and that is reported rather than absorbed.**
+Cold start on a channel, a window the off-path queue dropped, and a span the model had not
+reached are all `covered=False`, and all three raise the episode. Silence reading as dissent
+would be blanket suppression with a second opinion's name on it -- the v1 failure in a new
+coat -- so it is the case the unit tests are built around.
+
+**The agreement line is 3.0 and the whole curve is published beside it.** The line was fixed
+before the run, at a value deliberately *below* the model's own alarm threshold of 6.0, because
+the question here is corroboration rather than independent detection -- and because the
+generous setting is the one that protects recall and costs the headline reduction, not the
+reverse. The curve makes that checkable: at a bar of 6.0, 25 of 70 spans would agree instead of
+47, so more episodes would have been suppressed and the reduction would have been larger. The
+result is reported at the line that was chosen on principle, not at the line that flatters it.
+
+#### What it suppressed, against the plan written before the run
+
+`episodes.verdict` is persisted now (ADR-052), so this is read out of the database rather than
+off a console:
+
+```
+second_opinion_dissents   fault=3   artifact=1   unexplained=9
+corroborated              fault=0   artifact=0   unexplained=1
+```
+
+Read that against the headline, and note the two tables use opposite precedence on purpose: a
+fault underneath an artifact is `fault` here, because the question is whether a suppression
+destroyed evidence of something real, and `artifact` in the false-page count, because an
+operator woken during a deploy artifact was woken for nothing whatever else was happening. The
+gap between them is exactly one episode, and the arithmetic closes:
+
+| Of the 14 suppressions | Count |
+|---|---|
+| `unexplained` false pages removed -- the population B-6 said nothing could reach | **10** |
+| artifact false pages removed | 2 |
+| **true pages lost** (a fault, with no artifact over it) | **2** |
+
+Twelve false pages of fifty, which is the +24.0%. Two true pages lost, and **no incident went
+unpaged** -- both were channels of a multi-channel fault whose other metrics still paged, which
+is why incident recall is unchanged and the channel-episode row shows -3.5%. Both resolutions
+are reported because they answer different questions: the incident row is what an operator
+experiences, and the channel row is what was actually thrown away.
+
+#### What this settles about B-6, and what it does not
+
+**The un-attributable population is reachable, and this is the first evidence of it.** Ten of
+the 20 `unexplained` false pages on this run were removed by a signal that consulted no context
+event at all. B-6's ceiling arithmetic is about *context* conditioning and it still holds
+exactly as written; what v6a shows is that the ceiling is not a ceiling on conditioning, only
+on conditioning that needs an external cause.
+
+**It is still not 40%.** Twelve of 50 false pages went away and the target needs 20. Removing
+every remaining `unexplained` page would reach 44% -- so on this run, unlike v4w, the target is
+arithmetically *reachable* -- and the second detector agreed with the baseline on 47 of 76
+episodes, which is the honest reason it cannot: on most of the false pages the two detectors
+see the same excursion, and they are both right that something moved. The excursion is real and
+the page is still false, because the thing that moved was noise. Cross-detector agreement
+cannot separate those two, and no amount of it will.
+
+**One thing this run cannot separate, recorded as G-17.** The advisory pass scores +6.0% where
+v4 published +18.9% for the same policy on the same command. Two causes are confounded: the
+verdict barrier now waits for the model, so verdicts are taken later and the corroboration
+index holds different evidence when read; and the scenario is not bit-reproducible across runs,
+because deploy timing is anchored to wall clock -- the same seed produced 50 false pages here
+against v4's 53, and 30 artifact-driven against 35. The ablation is unaffected by either, since
+both passes are inside one run on identical records, so the +18.0-point contribution stands.
+What cannot be claimed from this run is a clean v4-to-v6 delta on the context half.
+
 ## 4. Q2 — detector vs. baseline on TSB-AD-M
 
 **Corpus.** TSB-AD-M, the multivariate track: 200 labelled series, 2.4 GB extracted.

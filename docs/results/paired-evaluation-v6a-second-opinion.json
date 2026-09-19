@@ -1,0 +1,202 @@
+{
+  "run": "47cd90b4",
+  "plan": "docs/results/paired-plan-v6a.json",
+  "config": {
+    "duration_s": 900.0,
+    "rate": 400.0,
+    "channels": 12,
+    "seed": 20260906,
+    "threshold": 8.0,
+    "min_corroborating_channels": 2,
+    "min_scope_fraction": 0.25,
+    "synchrony_ms": 5000,
+    "verdict_buffer_ms": 30000,
+    "require_blast_radius": true,
+    "min_blast_nodes": 2,
+    "second_opinion": true,
+    "second_opinion_agrees_at": 3.0,
+    "second_opinion_protects_attributed": true,
+    "ablate": "second-opinion"
+  },
+  "topology": "docs/results/fleet-inventory-v6a.json",
+  "ground_truth": {
+    "faults": 57,
+    "faults_inside_windows": 25,
+    "faults_outside_windows": 32,
+    "faults_inside_quiet_windows": 14,
+    "artifacts": 43,
+    "windows": 11,
+    "fault_incidents": 30,
+    "incidents_by_domain": {
+      "channel": 15,
+      "node": 13,
+      "rack": 2
+    }
+  },
+  "shadow": {
+    "label": "shadow",
+    "episodes": 76,
+    "paged": 76,
+    "attributed": 0,
+    "faults_total": 30,
+    "faults_detected": 28,
+    "faults_inside_total": 14,
+    "faults_inside_detected": 14,
+    "faults_outside_total": 16,
+    "faults_outside_detected": 14,
+    "faults_quiet_window_total": 7,
+    "faults_quiet_window_detected": 7,
+    "artifact_pages": 30,
+    "unexplained_pages": 20,
+    "faults_by_domain": {
+      "rack": [
+        2,
+        2
+      ],
+      "node": [
+        13,
+        13
+      ],
+      "channel": [
+        13,
+        15
+      ]
+    },
+    "fault_channels_total": 57,
+    "fault_channels_detected": 51,
+    "suppressed_by_verdict": {}
+  },
+  "conditioned": {
+    "label": "conditioned",
+    "episodes": 76,
+    "paged": 62,
+    "attributed": 14,
+    "faults_total": 30,
+    "faults_detected": 28,
+    "faults_inside_total": 14,
+    "faults_inside_detected": 14,
+    "faults_outside_total": 16,
+    "faults_outside_detected": 14,
+    "faults_quiet_window_total": 7,
+    "faults_quiet_window_detected": 7,
+    "artifact_pages": 28,
+    "unexplained_pages": 10,
+    "faults_by_domain": {
+      "rack": [
+        2,
+        2
+      ],
+      "node": [
+        13,
+        13
+      ],
+      "channel": [
+        13,
+        15
+      ]
+    },
+    "fault_channels_total": 57,
+    "fault_channels_detected": 49,
+    "suppressed_by_verdict": {
+      "second_opinion_dissents": {
+        "fault": 3,
+        "artifact": 1,
+        "unexplained": 9
+      },
+      "corroborated": {
+        "fault": 0,
+        "artifact": 0,
+        "unexplained": 1
+      }
+    }
+  },
+  "fp_reduction": 0.24,
+  "recall_loss": 0.0,
+  "recall_loss_inside": 0.0,
+  "meets_target": false,
+  "fail_open": {
+    "shadow_episodes": 76,
+    "fail_open_episodes": 76,
+    "identical": 76,
+    "missing_from_fail_open": 0,
+    "extra_in_fail_open": 0,
+    "suppressed": 0,
+    "attributed": 0
+  },
+  "conditioning": [
+    "conditioning: on, reading 'ops.context', verdicts held 30s of event time behind the fleet watermark",
+    "conditioning: decided 76 | attributed 14 | raised 62 | corroborated=1, fault_domain=1, implausible=28, isolated=29, narrow_blast_radius=2, second_opinion_agrees=2, second_opinion_dissents=13",
+    "rejections reached (an episode carries one): fault_domain=1, implausible=242, isolated=66, narrow_blast_radius=2, out_of_scope=54",
+    "second detector (chronos-bolt-tiny) over 76 decisions at agreement 3: abstained=15, agrees=47, dissents=14 | suppressed 13, vetoed an attribution 2",
+    "agreement sensitivity over 70 scored spans (bar:agreeing) 1:70 2:66 3:47 4:38 6:25 8:14 | peak p50 4.1 p90 10.2 max 19.3",
+    "corroboration evidence over 72 scoped decisions: in-scope siblings synchronous mean 0.18 (13 decisions with >=1) | present anywhere in the episode span mean 3.00 (60 decisions with >=1)",
+    "verdict barrier: buffer 30s | held 76 | released on watermark 74 | on flush 2 | delayed past episode close 12 of 71, event-time p50 0.0s p95 30.0s max 210.0s",
+    "context events seen 42 (malformed 0)"
+  ],
+  "suppressed_by_verdict": {
+    "second_opinion_dissents": {
+      "fault": 3,
+      "artifact": 1,
+      "unexplained": 9
+    },
+    "corroborated": {
+      "fault": 0,
+      "artifact": 0,
+      "unexplained": 1
+    }
+  },
+  "ablation": {
+    "removed": "the second detector, advisory only",
+    "pass": {
+      "label": "the second detector, advisory only",
+      "episodes": 76,
+      "paged": 73,
+      "attributed": 3,
+      "faults_total": 30,
+      "faults_detected": 28,
+      "faults_inside_total": 14,
+      "faults_inside_detected": 14,
+      "faults_outside_total": 16,
+      "faults_outside_detected": 14,
+      "faults_quiet_window_total": 7,
+      "faults_quiet_window_detected": 7,
+      "artifact_pages": 28,
+      "unexplained_pages": 19,
+      "faults_by_domain": {
+        "rack": [
+          2,
+          2
+        ],
+        "node": [
+          13,
+          13
+        ],
+        "channel": [
+          13,
+          15
+        ]
+      },
+      "fault_channels_total": 57,
+      "fault_channels_detected": 50,
+      "suppressed_by_verdict": {
+        "corroborated": {
+          "fault": 1,
+          "artifact": 1,
+          "unexplained": 1
+        }
+      }
+    },
+    "fp_reduction": 0.06,
+    "recall_loss": 0.0,
+    "conditioning": [
+      "conditioning: on, reading 'ops.context', verdicts held 30s of event time behind the fleet watermark",
+      "conditioning: decided 76 | attributed 3 | raised 73 | corroborated=3, fault_domain=1, implausible=39, isolated=31, narrow_blast_radius=2",
+      "rejections reached (an episode carries one): fault_domain=1, implausible=242, isolated=66, narrow_blast_radius=2, out_of_scope=54",
+      "second detector (chronos-bolt-tiny) over 76 decisions at agreement 3: abstained=15, agrees=47, dissents=14 | advisory only, changed nothing",
+      "agreement sensitivity over 70 scored spans (bar:agreeing) 1:70 2:66 3:47 4:38 6:25 8:14 | peak p50 4.1 p90 10.2 max 19.3",
+      "corroboration evidence over 72 scoped decisions: in-scope siblings synchronous mean 0.18 (13 decisions with >=1) | present anywhere in the episode span mean 3.00 (60 decisions with >=1)",
+      "verdict barrier: buffer 30s | held 76 | released on watermark 74 | on flush 2 | delayed past episode close 12 of 73, event-time p50 0.0s p95 30.0s max 210.0s",
+      "context events seen 42 (malformed 0)"
+    ]
+  }
+}

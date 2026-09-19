@@ -94,7 +94,20 @@ def reset_topics(bootstrap: str, kafka: KafkaSettings) -> None:
     time.sleep(3)
 
 
-def run_step(name: str, argv: list[str], env: dict | None = None, timeout: float = 3600) -> str:
+def run_step(
+    name: str,
+    argv: list[str],
+    env: dict | None = None,
+    timeout: float = 3600,
+    required: bool = True,
+) -> str:
+    """Run one pass. A pass that failed is not a pass that found nothing.
+
+    Aborting is the default because the alternative is worse than a crash: a detector that
+    exits non-zero -- the foundation model failing to load under `--second-opinion`, say --
+    writes no episodes at all, and scoring an empty schema against the plan produces a
+    confident and entirely fictitious result.
+    """
     print(f"\n--- {name} ---", flush=True)
     merged = {**os.environ, **(env or {})}
     proc = subprocess.run(
@@ -104,6 +117,8 @@ def run_step(name: str, argv: list[str], env: dict | None = None, timeout: float
     print(tail, flush=True)
     if proc.returncode != 0:
         print(proc.stderr[-2000:], file=sys.stderr)
+        if required:
+            raise SystemExit(f"{name} exited {proc.returncode}; refusing to score a failed pass")
     return proc.stdout
 
 
