@@ -151,7 +151,51 @@ both baselines, the adapter's score, the per-symptom breakdown and the exact-mat
 The delta was positive; had it been negative that would have been the finding and it would
 have gone in the same place.
 
-### B-4. Reopened and re-answered by v4. The root cause was distributed-systems, not statistical. NFR-8 still not met.
+### B-4. Reopened and re-answered by v6. The signal that moved the number needs no external cause at all. NFR-8 still not met.
+
+**v6, 2026-09-18.** The diagnosis that held through five attempts -- context conditioning can
+only suppress a false page that has an attributable cause, and most of them do not -- is
+correct, and it turned out not to be a statement about conditioning. The platform already runs
+a second detector on the same windows (ADR-017); consulting it needs no deploy and no pipeline
+event. Used as a corroborator that raises no episodes of its own (ADR-050), on the same seed,
+density and command as v4:
+
+| Run | FP reduction | Recall loss | Quiet-window recall | NFR-8 |
+|---|---|---|---|---|
+| v4, 12 ch (context only) | +18.9% | -3.3% | +0.0% | missed |
+| v4w, 24 ch (context only) | +3.6% | -3.3% | +0.0% | missed |
+| **v6a, 12 ch** | **+24.0%** | **+0.0%** | +0.0% | missed |
+| **v6aw, 24 ch** | **+35.4%** | **-3.3%** | +0.0% | missed |
+
+Both runs carry a fourth pass in which the second detector runs, is waited for, records what it
+saw and may not act on it (ADR-051), so its contribution is an isolation rather than a
+comparison across runs:
+
+| Ablation, byte-identical records, one run | FP reduction | Recall loss |
+|---|---|---|
+| 12 ch, advisory -> acting | +6.0% -> **+24.0%** | +0.0% -> **+0.0%** |
+| 24 ch, advisory -> acting | +9.7% -> **+35.4%** | -6.7% -> **-3.3%** |
+
+**What is new, and it is not the headline.** At 24 channels the signal improved **both halves at
+once** -- 25.7 points of reduction *and* the recall loss halved. Every run from v1 to v4w traded
+one half against the other. The mechanism is the veto: of the eleven episodes the v4w policy
+attributed to a deploy, agreement pulled back ten, and seven of the eleven overlapped a real
+fault. A timing policy cannot tell a seizing pump from a rollout (section 3.8); a second
+detector looking at the same values often can tell that something is genuinely there.
+
+**What it costs, at both resolutions.** 12 ch: 2 true pages, 0 incidents, channel-episode recall
+89.5% -> 86.0%. 24 ch: 6 true pages, 1 incident, 84.2% -> 77.2%, and the lost incident is a
+single-channel fault rather than a machine or a cabinet. Quiet-window recall is 7/7 in both.
+Fail-open held 76/76 and 145/145.
+
+**NFR-8 is still missed, and the reason is now specific.** +35.4% against 40% is a gap of about
+six false pages, not of a ceiling (see B-6 below). The 34 `unexplained` pages that survive are
+ones **both** detectors see: both are right that the signal moved, and neither can see that it
+moved for no reason. Closing that needs a third kind of evidence, not a tuning of this one.
+Full detail in `docs/EVALUATION.md` sections 3.12 to 3.14; the agreement line was fixed before
+the run and the whole sensitivity curve is published beside the result.
+
+---
 
 **Closed 2026-09-07.** Option 2 was taken: the defect was fixed (ADR-035) and the run
 repeated. All four measurements are published side by side in `docs/EVALUATION.md`
@@ -166,6 +210,8 @@ sections 3.4-3.7.
 | v4a | evidence made present, same criterion (ADR-037) | +27.8% | -16.7% | missed |
 | v4 | blast-radius discriminator, 12 ch (ADR-038) | +18.9% | **-3.3%** | missed |
 | v4w | blast-radius discriminator, 24 ch | +3.6% | **-3.3%** | missed |
+| **v6a** | cross-detector agreement, 12 ch (ADR-050) | **+24.0%** | **+0.0%** | missed |
+| **v6aw** | cross-detector agreement, 24 ch | **+35.4%** | **-3.3%** | missed |
 
 **What v4 answered (2026-09-07).** The root cause was a distributed-systems defect, not a
 statistical one, and fixing it did not rescue the target -- it changed which half fails.
@@ -233,16 +279,60 @@ delayed only 1 of 144 verdicts past the moment the episode closed, because an ep
 not close until its channel has been quiet for two window slides and the buffer has usually
 already elapsed by then. Whatever NFR-3 is restated to, that delay belongs in the statement.
 
-### B-6. The 40% false-positive target was unreachable on the v4w run before the policy decided anything. Redefine the denominator, or fix the detector?
+### B-6. Largely answered by v6, and by the option nobody recommended. Still open on one point.
+
+**v6, 2026-09-18. The arithmetic was right and it was not a ceiling on conditioning.** B-6
+computed that only 37 of 112 false pages on the v4w run overlapped an injected artifact, so no
+*context* signal could remove more than 33% of them. That remains exactly true, and it is true
+on the v6aw run too: 42 of 113 are artifact-driven, a context ceiling of 37.2%.
+
+The v6aw policy reached **35.4%**, and it got there by the opposite route -- it removed **37 of
+the 71 un-attributable pages (52%)** and only 3 of the 42 artifact pages (7%). A second detector
+consulted about the same windows needs no context event to have an opinion (ADR-050), so the
+denominator B-6 was worried about never bound it.
+
+**What that does to the three options.**
+
+1. **Report against the attributable subset.** No longer necessary to make the number
+   interesting, which is the best possible outcome for a proposal whose main objection was that
+   it changes a metric's meaning after five misses. **Declined, and not because it is wrong** --
+   because it is now unneeded, and the honest denominator was always the whole population.
+2. **Reduce the unexplained pages.** This is what happened, and it did **not** need the detector
+   changed: a threshold was not moved, the foundation model was not substituted for the z-score,
+   and the episode population is identical to the shadow pass. It needed the second detector
+   *consulted* rather than replaced. This is the option that worked.
+3. **Leave NFR-8 as written and keep reporting it missed.** Also what happened, and now cheap:
+   the gap at 24 channels is +35.4% against 40%, about six false pages.
+
+**What is still open, and it is a smaller question than the original one.** Six pages is close
+enough that the temptation to tune is real, and the agreement line is exactly the knob that
+would do it -- at a bar of 6.0 instead of 3.0 only 27 of 135 spans agree, so more would be
+suppressed. The line was fixed before the run and the whole curve is published (section 3.13) so
+that this cannot happen quietly. **The architect's remaining call is whether a sweep of that
+line is a legitimate calibration or a tuned result**, and the implementer's view is that any
+sweep must be scored on a *different seed* from the one it is chosen on, or it is the latter.
+That is a protocol decision, not an implementation one.
+
+The 34 surviving `unexplained` pages are ones **both** detectors see. Both are right that the
+signal moved; it moved because of AR(1) noise, and cross-detector agreement is structurally
+blind to the difference between a real excursion with a cause and a real excursion without one.
+Closing the last 4.6 points needs a third kind of evidence, not more of this one.
+
+---
+
+**The original entry, kept as written.**
 
 **What was found, and it should have been computed four runs ago.** NFR-8 asks for a >= 40%
-reduction in false pages. A conditioning policy can only remove a false page by attributing
-it to a context event, so it can only ever touch pages that overlap an injected artifact.
-On the v4w run, **75 of 112 false pages are `unexplained`**: they overlap no injected
-excursion at all, so nothing in the context topic could account for them however good the
-discriminator is. The ceiling is 37/112 = **33%**, achieved only by attributing every
-artifact page and never being wrong. At 12 channels the ceiling is 35/53 = 66%, and the
-measured +18.9% is 29% of it.
+reduction in false pages. A conditioning policy can only remove a false page by attributing it
+to a context event, so it can only ever touch pages that overlap an injected artifact. On the
+v4w run, **75 of 112 false pages are `unexplained`**: they overlap no injected excursion at
+all, so nothing in the context topic could account for them however good the discriminator is.
+The ceiling is 37/112 = **33%**, achieved only by attributing every artifact page and never
+being wrong. At 12 channels the ceiling is 35/53 = 66%, and the measured +18.9% is 29% of it.
+
+*(The premise in the first sentence -- "can only remove a false page by attributing it to a
+context event" -- is the one v6 falsified. It was true of every policy that existed when it was
+written.)*
 
 **The options.**
 
@@ -306,11 +396,12 @@ Recorded here rather than only in the docs that would flatter themselves by omit
 | G-6 | The multivariate fold is max-across-columns, so an anomaly that exists only in the *correlation* between features — where every column alone looks normal — cannot be detected. Such anomalies are in the corpus. | `benchmark.py` module docstring |
 | G-11 | The benchmark scored **144 of 200 series**. The other 56 were excluded by the 20,000-point truncation because their labelled anomalies begin later, so the scored corpus is the early-onset half. An untruncated run is estimated at 4+ hours of CPU and has not been done. | `docs/EVALUATION.md` section 4.3 |
 | G-12 | Only Chronos-Bolt-**tiny** was benchmarked, chosen to fit the laptop. A larger checkpoint may close the 141x-cost gap; the claim is about this model at this size, not about foundation models generally. | `docs/EVALUATION.md` section 4.3 |
-| G-13 | **CI has never actually run.** The repository has no remote, so no GitHub Actions workflow has ever executed. Every step was run locally and passes -- lint, format, 524 tests, the secret scan, the repo-standards checks and the agent quality gate -- but "CI green" means "green when run by hand here", not "green on a runner". | `.github/workflows/ci.yml`, this table |
+| G-13 | **CI has never actually run.** The repository has no remote, so no GitHub Actions workflow has ever executed. Every step was run locally and passes -- lint, format, 722 tests, the secret scan, the repo-standards checks and the agent quality gate -- but "CI green" means "green when run by hand here", not "green on a runner". | `.github/workflows/ci.yml`, this table |
 | G-7 | ~~Conditioning is applied as episodes close, so an episode closing early sees fewer potential corroborating siblings than one closing late.~~ **Closed 2026-09-07 (ADR-037).** The corroboration index is filled when an episode *opens*, and the verdict waits behind an event-time barrier keyed to the fleet watermark. Measured on the v4a control: in-scope siblings present somewhere in the episode's span in **56 of 83** scoped decisions, mean 2.47 -- evidence that was not there before. The consequence was not the expected one: with the evidence present the corroboration test fires three times as often and takes real faults with it, which is what ADR-038 exists to answer. | `docs/EVALUATION.md` section 3.8 |
 | G-15 | **The generator that places the faults and the policy that reads the topology share a model of the world.** The blast-radius discriminator is scored on data built to have the structure it looks for. That measures whether the mechanism works given the premise -- that deploy rings cut across failure domains and that a machine's metrics fail together -- not whether the premise holds in a real fleet. The premise is an operational claim about deploy practice and is stated in ADR-038 so it can be argued with. | ADR-038, `docs/EVALUATION.md` section 3.9 |
 | G-16 | The recorded **verdict** was not the verdict the corroboration test reached. When several context events overlap an episode, the policy kept the last non-out-of-scope rejection, and pipeline health events sort last and answer `implausible` -- so an `isolated` conclusion from the deploy test was overwritten in the record every time a health event also overlapped, which is almost always. That is why every published run reports `isolated=0`. The decision was never affected (both verdicts raise the episode) and no measured number changes, but the diagnosis in sections 3.4 and 3.7 rested on a field that could not report the thing it was read as reporting. | `docs/EVALUATION.md` section 3.8 |
 | G-17 | **The v6 runs cannot produce a clean v4-to-v6 delta on the context half.** The advisory (ablation) pass runs the v4 policy and scores +6.0% at 12 channels where v4 published +18.9% for the same policy on the same command. Two causes are confounded and this run separates neither: the verdict barrier now also waits for the second detector (ADR-051), so verdicts are taken later and the corroboration index holds different evidence when it is read; and the scenario is not bit-reproducible across runs because deploy timing is anchored to wall clock -- the same seed produced 50 shadow false pages here against v4's 53, and 30 artifact-driven against 35. The **ablation itself is unaffected**, because both of its passes are inside one run on byte-identical records, so the isolated contribution of cross-detector agreement stands. Separating the two would need a v4 re-run under the v6 barrier, which is a third pass nobody has run. | `docs/EVALUATION.md` section 3.12 |
+| G-18 | **The v6 ablation is byte-identical in its records and not quite in its evidence.** Off-path scoring is wall-clock asynchronous, so a window can land either side of a decision point even with the same records and the same barrier. At 24 channels the two passes agreed on the second detector's opinion for **144 of 145** decisions and differed on one (`abstained` 22 against 21); at 12 channels they were identical on all 76. One decision does not carry the 25.7-point difference the ablation measures, but an ablation described as identical should be identical, and this one is identical in records rather than in evidence. Making it exact would mean scoring the second detector synchronously, which ADR-017 forbids on the hot path and ADR-051 rejects for this reason. | `docs/EVALUATION.md` section 3.13 |
 | G-8 | The evaluation's deploy density is deliberately high (14 overlapping deploys over 900 s). It is a hard case, not a representative one. | `docs/EVALUATION.md` section 3.4 |
 | G-9 | The scale sweep's dip at 4 consumers is unexplained. Uneven partition assignment (2,2,1,1 over 6 partitions, with the drain ending when the slowest consumer finishes) predicts exactly that shape, but the harness records only the total, not the per-consumer spread, so it is a hypothesis. | `docs/SCALE.md` section 3 |
 | G-10 | NFR-5 asks for near-linear scaling and the measurement does not show it: 6 consumers buy 1.80x and efficiency falls to 30%. The plateau is at 3 consumers, half the partition count, so partitions are not what binds it. The likely cause -- broker and consumers sharing ten cores -- is named but not isolated. | `docs/SCALE.md` sections 2 and 3 |

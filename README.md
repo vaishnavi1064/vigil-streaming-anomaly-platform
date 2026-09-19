@@ -25,9 +25,9 @@ bottom. Where a target was missed it says so, and the misses are the interesting
 | **Detection benchmark, including the loss** | On 144 of 200 TSB-AD-M series the **z-score baseline beats** Chronos-Bolt-tiny — median AUC-PR **0.198 vs 0.152**, head-to-head **78 / 56 / 10 ties** — at **141x less compute** (59 s vs 8,312 s). Chronos wins where normal is structured and non-stationary (Exathlon 19–8) and loses on sharp excursions against a flat baseline (SVDB 21–1) | [EVALUATION](docs/EVALUATION.md) 4 |
 | **Serving store and event lake** | ClickHouse for readings and window scores; Iceberg on MinIO as the durable record. Both **effectively-once**: the lake sink was restarted with `--from-beginning` and **read 0 records**, because the Kafka offsets live in the Iceberg snapshot that committed the rows. 0 duplicate rows | [EVALUATION](docs/EVALUATION.md) 8 |
 | **Reconciliation against the lake** | Ledger and lake agreed on **6/6 channels** — one count from streaming the Kafka log, one from reading Parquet off object storage, sharing no code and no state | [EVALUATION](docs/EVALUATION.md) 8.4 |
-| **The core contribution, which missed its target** | Context-conditioned detection measured **seven times**. Best run: **+18.9% false-page reduction at −3.3% recall**. NFR-8 wanted ≥40% reduction at ≈0 recall loss. **Missed, five times, and published each time** | [EVALUATION](docs/EVALUATION.md) 3 |
+| **The core contribution, which still misses its target** | Context-conditioned detection measured **nine times**. Best run: **+35.4% false-page reduction at −3.3% recall** (24 channels), with **+24.0% at −0.0%** at 12. NFR-8 wanted ≥40% reduction at ≈0 recall loss. **Missed all nine times, and published each time.** The run that moved it was the one that stopped asking *what was happening* and asked the second detector *did you see this too* | [EVALUATION](docs/EVALUATION.md) 3 |
 
-**697 tests** (78 integration, against real Kafka, Postgres, ClickHouse and Iceberg containers).
+**722 tests** (78 integration, against real Kafka, Postgres, ClickHouse and Iceberg containers).
 
 ---
 
@@ -87,7 +87,7 @@ deliberately with `docker compose --profile flink up -d --build`.
 Everything else:
 
 ```bash
-python -m pytest                        # 697 tests; integration ones need compose up
+python -m pytest                        # 722 tests; integration ones need compose up
 python -m pytest -m "not integration"   # unit only
 python chaos.py                         # the fault suite
 python evaluate.py                      # the paired conditioning measurement
@@ -140,9 +140,11 @@ Nothing is mirrored between them, so no query has to decide which copy to believ
 
 Not the stack. The stack is a list anyone can copy. These are the parts that took judgement.
 
-**A five-run investigation that ended in a negative result, published.** The core claim —
-that conditioning on pipeline health cuts false pages — was measured seven times and
-**missed its target every time**. The path is in [EVALUATION](docs/EVALUATION.md) section 3:
+**A nine-run investigation that is still a negative result, published run by run.** The
+core claim — that conditioning on operational context cuts false pages — has been
+measured nine times and has **missed its target every time**, and the interesting part is
+that the last two runs missed it for a completely different reason than the first seven.
+The path is in [EVALUATION](docs/EVALUATION.md) section 3:
 
 - **v1** suppressed by co-occurrence: +60.9% reduction, −36.7% recall. It scored well by
   muting real faults during deploys, which is the exact cheat the generator schedules a
@@ -156,14 +158,33 @@ that conditioning on pipeline health cuts false pages — was measured seven tim
   reached (G-16), which is why four published runs all reported `isolated=0`.
 - **v4a** was the control — same policy, evidence actually present — and made things *worse*
   in the expected direction, which is what ADR-038 was built to answer.
+- **v6** stopped asking what was happening and asked the other detector whether it saw the
+  same thing. Best numbers of the nine, both halves improved at once at 24 channels, still
+  short of 40%.
 
-Then the part I am most willing to defend: **B-6 showed the 40% target was arithmetically
-unreachable on that run.** 75 of 112 false pages overlapped no injected artifact at all, so
-the ceiling was 37/112 = **33%** even for a perfect discriminator. The obvious move was to
-redefine the denominator to the attributable subset, which would have made the headline pass.
-I wrote the option down, recommended nothing, and **left the target as missed** — changing a
-metric after five failures to hit it needs a better reason than "the old one was
-unflattering".
+Then the part I am most willing to defend, in two halves.
+
+**First, B-6 showed the 40% target was arithmetically unreachable on that run.** 75 of 112
+false pages overlapped no injected artifact at all, so the ceiling was 37/112 = **33%** even
+for a perfect discriminator. The obvious move was to redefine the denominator to the
+attributable subset, which would have made the headline pass. I wrote the option down,
+recommended nothing, and **left the target as missed** — changing a metric after five
+failures to hit it needs a better reason than "the old one was unflattering".
+
+**Then v6 attacked the population that arithmetic had excluded, and the denominator never
+had to move.** Every policy up to that point explained an episode by pointing at a deploy or
+a pipeline event, so none of them could reach a false page with no cause to point at. The
+platform already ran a second detector on the same windows; asking it "did you see this
+too" needs no cause at all. That took 24 channels from **+9.7% / −6.7% to +35.4% /
+−3.3%** on byte-identical records — the first mechanism here to improve *both* halves of
+NFR-8 at once, because agreement pulled back ten of the eleven deploy
+attributions and seven of those overlapped a real fault. It removed **52% of the pages B-6
+had counted as out of reach**, and it is still 4.6 points short of the target. What the second
+detector is *not* allowed to do is the load-bearing part: it raises no episodes, so the
+shadow pass and the false-page denominator are untouched and the run stays comparable to all
+seven before it — and "I have no opinion" (cold start, a dropped window, an absent model, 20%
+of decisions) never counts as disagreement, or the whole thing would be v1's blanket
+suppression wearing a second opinion's coat.
 
 **Honest benchmarking against my own thesis.** The project is built around a foundation-model
 detector. The benchmark says a rolling z-score beats it on this corpus at 141x less compute,
@@ -193,7 +214,10 @@ as a successful dedupe. Both are [ADR-046](docs/DECISIONS.md) and both narrowed 
 
 ## What is not true yet
 
-- **NFR-8 is missed.** Seven measurements, best +18.9% / −3.3% against a 40% / ≈0 target.
+- **NFR-8 is missed.** Nine measurements, best **+35.4% / −3.3%** against a 40% / ≈0 target.
+  The remaining gap is about six false pages, and the reason they survive is stated: **both**
+  detectors see them, both are right that the signal moved, and neither can see that it moved
+  for no reason.
 - **The Kubernetes layer has never run.** 25 resources, all schema-valid, **zero pods ever
   scheduled**. [DEPLOYMENT](docs/DEPLOYMENT.md) section 6 lists what that leaves unproven.
 - **The VLM explainer has never called a model.** Built against Claude with 40 tests, none of

@@ -654,6 +654,13 @@ is consistent with a test that fires once there and is therefore measuring noise
 
 ### 3.11 All seven measurements, and what v4 settles
 
+> Extended, not replaced, by section 3.14 -- v6 adds two rows and changes one conclusion below.
+> The paragraph headed "the corroboration half still does not reach NFR-8" ends by naming the
+> un-attributable population as the first thing a v5 has to confront, and recording it as B-6.
+> That was right; what it did not anticipate is that the population turned out to be reachable
+> without any context signal at all (section 3.13). Kept as written, because a record that
+> quietly repairs its own earlier conclusions is not a record.
+
 | Run | What changed | FP reduction | Recall loss | Quiet-window recall | NFR-8 |
 |---|---|---|---|---|---|
 | **v1** | corroboration by co-occurrence in a 30 s window | **+60.9%** | **-36.7%** | -100.0% | missed |
@@ -897,6 +904,192 @@ because deploy timing is anchored to wall clock -- the same seed produced 50 fal
 against v4's 53, and 30 artifact-driven against 35. The ablation is unaffected by either, since
 both passes are inside one run on identical records, so the +18.0-point contribution stands.
 What cannot be claimed from this run is a clean v4-to-v6 delta on the context half.
+
+### 3.13 v6aw -- the same signal at 24 channels, where B-6 computed the ceiling
+
+B-6's arithmetic was done on the v4w run, at 24 channels, because that is where the
+un-attributable population dominates: **75 of 112 false pages** there overlapped no injected
+excursion. At 12 channels it is 20 of 50. So this is the width where the question actually
+bites, and v4w is also where the context-only policy did worst -- **+3.6%**, its weakest
+reduction of any run.
+
+Per-channel sampling rate is held constant, as in v4w: 800 ev/s over 24 channels is the same
+33 Hz per channel as 400 over 12, because the z-score scales with the square root of a window's
+point count and halving it would move the detector's operating point inside the comparison.
+
+Run `d033475d`, **same command, same seed, same density as v4w**:
+
+```
+python evaluate.py --duration 900 --rate 800 --channels 24 \
+    --deploys-per-hour 60 --faults-per-hour 120 --second-opinion \
+    --report-json docs/results/paired-evaluation-v6aw-second-opinion-wide.json
+```
+
+Ground truth identical to v4's and v6a's: 30 fault incidents (15 single-channel, 13 machine, 2
+cabinet) over 57 channel-episodes, 43 artifacts, 11 deploy windows, 7 incidents inside quiet
+deploys. The shadow pass recorded 145 episodes against v4w's 147.
+
+| Measure | Shadow | Conditioned | Delta |
+|---|---|---|---|
+| Episodes recorded | 145 | 145 | |
+| Pages raised | 145 | 99 | -46 |
+| Attributed (not paged) | 0 | 46 | |
+| False pages (artifact + unexplained) | 113 | 73 | **-40** |
+| of which artifact-driven | 42 | 39 | -3 |
+| of which **unexplained** | 71 | **34** | **-37** |
+| Recall, all real faults (incidents) | 90.0% (27/30) | 86.7% (26/30) | **-3.3%** |
+| Recall, faults **outside** windows | 87.5% (14/16) | 81.2% (13/16) | -6.2% |
+| Recall, faults **inside** windows | 92.9% (13/14) | 92.9% (13/14) | **+0.0%** |
+| Recall, faults in **quiet** windows | 100.0% (7/7) | 100.0% (7/7) | **+0.0%** |
+| Recall, per fault channel-episode | 84.2% (48/57) | 77.2% (44/57) | -7.0% |
+| Precision (incident-level) | 22.1% | 26.3% | +4.2% |
+
+**false-positive reduction +35.4% (target >= 40%, missed) -- recall loss +3.3%
+(tolerance <= 5%, MET). NFR-8 NOT MET.**
+
+Fail-open held: **145 of 145** episodes identical to the unconditioned pass.
+
+#### The ablation, and the thing it shows that v6a did not
+
+| Same records, same run | FP reduction | Recall loss (incidents) | Attributed | Fault channel-episodes kept |
+|---|---|---|---|---|
+| second detector **advisory** (the v4w policy) | **+9.7%** | **-6.7%** | 11 of 145 | 44/57 |
+| second detector **acting** | **+35.4%** | **-3.3%** | 46 of 145 | 44/57 |
+
+**The signal improved both halves of NFR-8 at once.** Reduction went up 25.7 points and recall
+loss **halved**, 6.7% to 3.3%, on identical records inside one run. Every mechanism before this
+traded one half against the other -- that is the entire shape of sections 3.4 to 3.11, and v4's
+blast-radius test bought its 3.4 points of recall by giving up 4.4 points of reduction. This
+one did not have to.
+
+The reason is the veto, and the verdict record shows it directly:
+
+```
+advisory:  corroborated=11, fault_domain=4, implausible=91, isolated=36, narrow_blast_radius=3
+acting:    corroborated=1,  fault_domain=3, implausible=55, isolated=29, narrow_blast_radius=2,
+           second_opinion_agrees=10, second_opinion_dissents=45
+```
+
+Of the eleven episodes the v4w policy attributed to a deploy, **agreement pulled back ten**, and
+**seven of those eleven overlapped a real fault**. That is the v4a finding from section 3.8 --
+"a seizing pump is synchronous inside its own scope, so every question a timing policy knows how
+to ask answers *deploy*" -- caught by an entirely different kind of evidence. The corroboration
+test cannot tell a machine failing from a rollout arriving; a second detector looking at the
+same values can often tell that *something is really there*, and that is enough to refuse the
+attribution.
+
+#### What it suppressed, against the plan written before the run
+
+```
+second_opinion_dissents   fault=8   artifact=0   unexplained=37
+corroborated              fault=1   artifact=0   unexplained=0
+```
+
+The arithmetic, in the false-page precedence the headline uses (three of the nine
+fault-overlapping suppressions also sat under an artifact):
+
+| Of the 46 suppressions | Count |
+|---|---|
+| `unexplained` false pages removed -- the population B-6 counted as unreachable | **37 of 71** |
+| artifact false pages removed | 3 of 42 |
+| **true pages lost** | **6** |
+
+Six true pages cost **one incident** (27 to 26) and four fault channel-episodes (48 to 44). Both
+resolutions are reported, and the shapes are in the domain row: the loss is a single-channel
+fault (13/15 to 12/15), not a machine or a cabinet, which is what one would expect of a signal
+that suppresses lone excursions. Quiet-window recall is untouched at 7/7, which is the
+population that exists to catch blanket suppression.
+
+#### What this does to B-6
+
+B-6 said the 40% target was **arithmetically unreachable** on the v4w run: only 37 of 112 false
+pages overlapped an injected artifact, so the ceiling on context conditioning was 33%. That
+statement is still true, and it is still true here -- 42 of 113 are artifact-driven, a context
+ceiling of **37.2%**.
+
+What has changed is that the ceiling is no longer the ceiling on *conditioning*.
+
+- The conditioned pass reached **35.4%**, and it got there by almost the opposite route: it
+  removed **52% of the un-attributable pages** (37 of 71) and only **7% of the artifact pages**
+  (3 of 42). A policy that B-6's arithmetic could not have scored above 33% scored 35.4% by
+  attacking the population that arithmetic excluded.
+- The combined headroom is now the whole false-page population. Forty percent of 113 is 45.2
+  pages; this run removed 40. **It missed by roughly six pages, not by a ceiling.**
+- If the signal had caught every remaining `unexplained` page on top of the advisory pass's
+  eleven, the run would have reached 73%.
+
+So the honest restatement is this: **B-6's option 2 -- "reduce the unexplained pages at the
+detector" -- is the one that works, and it does not need the detector changed.** It needs a
+second detector consulted. Option 1, redefining the denominator, is no longer necessary to make
+the number interesting, which is the best possible outcome for a question that was about whether
+to redefine a metric after missing it.
+
+**And NFR-8 is still missed.** +35.4% against 40%. The gap is now 4.6 points rather than 36.4,
+and it is closed by discrimination rather than by arithmetic -- but it is not closed.
+
+#### Why the remaining gap is hard, on the evidence
+
+```
+second detector (chronos-bolt-tiny) over 145 decisions at agreement 3:
+  abstained=22, agrees=77, dissents=46
+agreement sensitivity over 135 scored spans (bar:agreeing)
+  1:134  2:117  3:77  4:45  6:27  8:16 | peak p50 3.2  p90 8.2  max 16.1
+```
+
+**The two detectors agree on 77 of 145 episodes**, and 34 false pages survive as `unexplained`.
+On those, both detectors see the same excursion and both are right that something moved -- it
+moved because of AR(1) noise, and cross-detector agreement is structurally blind to the
+difference between a real excursion caused by nothing and a real excursion caused by something.
+Raising the bar would suppress more of them: at 6.0, only 27 of 135 spans agree instead of 77.
+It would also suppress more real faults, and the line was fixed before the run precisely so that
+this paragraph cannot end with a new one.
+
+**One honest imperfection in the ablation, recorded as G-18.** The two passes recorded
+`abstained=22, dissents=46` and `abstained=21, dissents=47`: they saw identical evidence on 144
+of 145 decisions and differed on one, because off-path scoring is wall-clock asynchronous and a
+window can land either side of a decision point even when the barrier and the records are the
+same. The isolation is therefore near-exact rather than exact, and at this magnitude one
+decision does not carry 25.7 points of reduction. It is stated because an ablation described as
+byte-identical should be byte-identical, and this one is byte-identical in its *records* and not
+quite in its *evidence*.
+
+### 3.14 All nine measurements
+
+| Run | What changed | FP reduction | Recall loss | Quiet-window recall | NFR-8 |
+|---|---|---|---|---|---|
+| **v1** | corroboration by co-occurrence in a 30 s window | **+60.9%** | **-36.7%** | -100.0% | missed |
+| **v2** | required synchrony, compared on window starts | +9.0% | -10.0% | -33.3% | missed |
+| **low density** | 20 deploys/hour instead of 60 | +6.7% | -6.7% | +0.0% | missed |
+| **v3** | required synchrony, compared on **true onsets** | +11.1% | -6.7% | -33.3% | missed |
+| **v4a** | same policy, evidence made **present** (ADR-037) | +27.8% | -16.7% | +0.0% | missed |
+| **v4** | topology discriminator, 12 ch | +18.9% | **-3.3%** | +0.0% | missed |
+| **v4w** | topology discriminator, 24 ch | +3.6% | **-3.3%** | +0.0% | missed |
+| **v6a** | **cross-detector agreement**, 12 ch (ADR-050) | **+24.0%** | **+0.0%** | +0.0% | missed |
+| **v6aw** | **cross-detector agreement**, 24 ch | **+35.4%** | **-3.3%** | +0.0% | missed |
+
+Read the last two rows against their own shadow passes and their own ablations. v6a and v6aw
+share v4's scenario generator and ground truth, and v6a's shadow pass reproduced v4's episode
+count exactly (76), which none of the earlier pairs could claim.
+
+**What v6 establishes.**
+
+**The false-positive half moved for the first time without being paid for in recall.** Every
+run from v1 to v4w either bought reduction with recall or bought recall with reduction. v6a
+bought 18.0 points of reduction for zero incident-level recall loss; v6aw bought 25.7 points
+*and* halved the recall loss. That is a different kind of result from the seven before it, and
+the ablation is what makes it a measurement rather than a claim.
+
+**The binding constraint was never the discriminator's quality. It was the evidence it was
+allowed to look at.** Four runs argued about timing resolution, one about topology, and B-6
+finally computed that two thirds of the target population was outside the reach of all of them.
+The signal that moved the number consults no context event at all.
+
+**And the target is still missed, at both widths.** +24.0% at 12 channels, +35.4% at 24, against
+40%. What changed is the diagnosis: at 24 channels the remaining gap is about six false pages
+and the reason they survive is stated -- both detectors see them, both are right that the signal
+moved, and neither can see that it moved for no reason. Closing it needs something that
+distinguishes a real excursion with a cause from a real excursion without one, which is a third
+kind of evidence again and not a tuning of this one.
 
 ## 4. Q2 — detector vs. baseline on TSB-AD-M
 
