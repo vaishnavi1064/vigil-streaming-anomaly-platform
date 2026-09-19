@@ -19,8 +19,10 @@ from vigil.evaluation.paired import (
     PairedResult,
     TruthEpisode,
     TruthWindow,
+    classify,
     compare_fail_open,
     score_pass,
+    verdict_breakdown,
 )
 
 __all__ = [
@@ -33,9 +35,11 @@ __all__ = [
     "SeriesScore",
     "TruthWindow",
     "auc_pr",
+    "classify",
     "compare_fail_open",
     "score_at_budget",
     "score_pass",
     "score_series",
     "detection_delays",
+    "verdict_breakdown",
 ]

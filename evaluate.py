@@ -121,6 +121,8 @@ def conditioning_lines(stdout: str) -> list[str]:
         "rejections reached",
         "verdict barrier:",
         "context events seen",
+        "second detector",
+        "agreement sensitivity",
     )
     return [line.strip() for line in stdout.splitlines() if line.strip().startswith(keep)]
 
@@ -141,7 +143,7 @@ def read_episodes(settings: PostgresSettings, schema: str) -> list[ObservedEpiso
         conn.execute(f'SET search_path TO "{schema}"')
         rows = conn.execute(
             "SELECT channel, t_start_ms, t_end_ms, status, raised_by, peak_score, attributed_to"
-            " FROM episodes ORDER BY t_start_ms"
+            ", verdict FROM episodes ORDER BY t_start_ms"
         ).fetchall()
     return [
         ObservedEpisode(
@@ -152,6 +154,7 @@ def read_episodes(settings: PostgresSettings, schema: str) -> list[ObservedEpiso
             raised_by=r["raised_by"],
             peak_score=float(r["peak_score"]),
             attributed_to=r["attributed_to"],
+            verdict=r["verdict"],
         )
         for r in rows
     ]
@@ -169,7 +172,7 @@ def main(argv: list[str] | None = None) -> int:
     shadow_schema = f"vigil_shadow_{stamp}"
     conditioned_schema = f"vigil_cond_{stamp}"
     fail_open_schema = f"vigil_failopen_{stamp}"
-    timing_only_schema = f"vigil_timing_{stamp}"
+    ablation_schema = f"vigil_ablate_{stamp}"
 
     print(f"paired evaluation {stamp}: {args.duration:g}s at {args.rate:g} ev/s", flush=True)
     reset_topics(bootstrap, kafka)
@@ -225,12 +228,27 @@ def main(argv: list[str] | None = None) -> int:
         "--from-beginning",
         "--stop-after-idle-s",
         "15",
-        "--no-foundation-model",
         "--threshold",
         str(args.threshold),
         "--report-interval",
         "60",
     ]
+    # The shadow pass runs the baseline alone. It has to: it is the population every other
+    # pass is scored against, and a second detector raising episodes of its own would
+    # change the denominator rather than the policy.
+    baseline_only = ["--no-foundation-model"]
+    # The corroborating detector, in the two passes that have a verdict to inform. It
+    # raises nothing; it answers "did you see this too" (ADR-050).
+    second_opinion_args = (
+        [
+            "--second-opinion",
+            "--second-opinion-agrees-at",
+            str(args.second_opinion_agrees_at),
+        ]
+        + ([] if args.second_opinion_protects_attributed else ["--no-second-opinion-veto"])
+        if args.second_opinion
+        else list(baseline_only)
+    )
     # Everything the conditioned and ablation passes share. The topology arguments are kept
     # apart so the ablation can drop exactly those and nothing else.
     timing_args = [
@@ -257,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
     make_schema(postgres, shadow_schema)
     run_step(
         "shadow pass (conditioning OFF)",
-        [*detector_args, "--group", f"vigil-eval-shadow-{stamp}"],
+        [*detector_args, *baseline_only, "--group", f"vigil-eval-shadow-{stamp}"],
         env={"PGOPTIONS": f"-c search_path={shadow_schema}"},
         timeout=1800,
     )
@@ -266,7 +284,13 @@ def main(argv: list[str] | None = None) -> int:
     make_schema(postgres, conditioned_schema)
     conditioned_stdout = run_step(
         "conditioned pass (conditioning ON)",
-        [*detector_args, "--group", f"vigil-eval-cond-{stamp}", *conditioning_args],
+        [
+            *detector_args,
+            *second_opinion_args,
+            "--group",
+            f"vigil-eval-cond-{stamp}",
+            *conditioning_args,
+        ],
         env={"PGOPTIONS": f"-c search_path={conditioned_schema}"},
         timeout=1800,
     )
@@ -277,19 +301,41 @@ def main(argv: list[str] | None = None) -> int:
     # rather than as a second invocation because two invocations regenerate the scenario
     # against a different wall clock and the window boundaries move (docs/EVALUATION.md
     # section 3.4), which would put a run-to-run difference inside an ablation.
-    timing_only_stdout = ""
-    if args.ablate_timing_only and args.require_blast_radius:
-        make_schema(postgres, timing_only_schema)
-        timing_only_stdout = run_step(
+    ablation_stdout = ""
+    ablation_label = ""
+    if args.ablate == "second-opinion" and args.second_opinion:
+        # The second detector still runs, is still waited for, and still records what it
+        # saw -- it simply may not change a decision. Dropping the model entirely would
+        # put the verdict barrier's timing inside the ablation alongside the signal.
+        ablation_label = "the second detector, advisory only"
+        make_schema(postgres, ablation_schema)
+        ablation_stdout = run_step(
+            "ablation pass (conditioning ON, second opinion ADVISORY)",
+            [
+                *detector_args,
+                *second_opinion_args,
+                "--second-opinion-advisory",
+                "--group",
+                f"vigil-eval-ablate-{stamp}",
+                *conditioning_args,
+            ],
+            env={"PGOPTIONS": f"-c search_path={ablation_schema}"},
+            timeout=1800,
+        )
+    elif args.ablate == "blast-radius" and args.require_blast_radius:
+        ablation_label = "timing and scope only, no blast-radius test"
+        make_schema(postgres, ablation_schema)
+        ablation_stdout = run_step(
             "ablation pass (conditioning ON, blast-radius test OFF)",
             [
                 *detector_args,
+                *second_opinion_args,
                 "--group",
-                f"vigil-eval-timing-{stamp}",
+                f"vigil-eval-ablate-{stamp}",
                 *timing_args,
                 "--no-blast-radius",
             ],
-            env={"PGOPTIONS": f"-c search_path={timing_only_schema}"},
+            env={"PGOPTIONS": f"-c search_path={ablation_schema}"},
             timeout=1800,
         )
 
@@ -297,10 +343,16 @@ def main(argv: list[str] | None = None) -> int:
     fail_open: FailOpenCheck | None = None
     if args.verify_fail_open:
         make_schema(postgres, fail_open_schema)
+        # Context-conditioning only, deliberately. ADR-007's promise is about the context
+        # signal: an episode decided with no context must be raised unconditioned. The
+        # second detector is a different source with its own abstention rule (unit-tested
+        # in tests/test_second_opinion.py), and letting it suppress here would turn a
+        # check on one mechanism into a check on two.
         run_step(
-            "fail-open pass (conditioning ON, context topic empty)",
+            "fail-open pass (conditioning ON, context topic empty, context signal only)",
             [
                 *detector_args,
+                *baseline_only,
                 "--group",
                 f"vigil-eval-failopen-{stamp}",
                 "--context-topic",
@@ -316,9 +368,9 @@ def main(argv: list[str] | None = None) -> int:
     shadow_episodes = read_episodes(postgres, shadow_schema)
     shadow = score_pass("shadow", shadow_episodes, truth)
     conditioned = score_pass("conditioned", read_episodes(postgres, conditioned_schema), truth)
-    timing_only = None
-    if timing_only_stdout:
-        timing_only = score_pass("timing only", read_episodes(postgres, timing_only_schema), truth)
+    ablated = None
+    if ablation_stdout:
+        ablated = score_pass(ablation_label, read_episodes(postgres, ablation_schema), truth)
     if args.verify_fail_open:
         fail_open = compare_fail_open(shadow_episodes, read_episodes(postgres, fail_open_schema))
     comparison = PairedComparison(
@@ -346,34 +398,55 @@ def main(argv: list[str] | None = None) -> int:
     print(comparison.verdict(), flush=True)
 
     ablation = None
-    if timing_only is not None:
+    if ablated is not None:
         ablation = PairedComparison(
             shadow=shadow,
-            conditioned=timing_only,
+            conditioned=ablated,
             fp_reduction_target=args.fp_target,
             recall_loss_tolerance=args.recall_tolerance,
         )
         print(flush=True)
         print("-" * 96, flush=True)
         print(
-            "ABLATION: the same policy with the blast-radius test off, same records, same run",
+            f"ABLATION: the same policy without {ablation_label}, same records, same run",
             flush=True,
         )
         print("-" * 96, flush=True)
         print(
-            f"timing and scope only:  false-positive reduction {ablation.fp_reduction:+.1%} | "
+            f"without it:  false-positive reduction {ablation.fp_reduction:+.1%} | "
             f"recall loss {ablation.recall_loss:+.1%} | "
-            f"attributed {timing_only.attributed} of {timing_only.episodes}",
+            f"attributed {ablated.attributed} of {ablated.episodes}",
             flush=True,
         )
         print(
-            f"with blast radius:      false-positive reduction {comparison.fp_reduction:+.1%} | "
+            f"with it:     false-positive reduction {comparison.fp_reduction:+.1%} | "
             f"recall loss {comparison.recall_loss:+.1%} | "
             f"attributed {conditioned.attributed} of {conditioned.episodes}",
             flush=True,
         )
-        print(f"  by fault domain, timing only: {timing_only.domain_line()}", flush=True)
-        print(f"  by fault domain, blast radius: {conditioned.domain_line()}", flush=True)
+        print(f"  by fault domain, without: {ablated.domain_line()}", flush=True)
+        print(f"  by fault domain, with:    {conditioned.domain_line()}", flush=True)
+
+    print(flush=True)
+    print("-" * 96, flush=True)
+    print(
+        "WHAT EACH VERDICT SUPPRESSED, against the plan written before the run "
+        "(suppressing a fault is the cost; suppressing an artifact or an unexplained page "
+        "is the point)",
+        flush=True,
+    )
+    print("-" * 96, flush=True)
+    for label, result in (("conditioned", conditioned), (ablation_label, ablated)):
+        if result is None:
+            continue
+        if not result.suppressed_by_verdict:
+            print(f"{label}: nothing suppressed", flush=True)
+            continue
+        rows = " | ".join(
+            f"{verdict} fault={c['fault']} artifact={c['artifact']} unexplained={c['unexplained']}"
+            for verdict, c in result.suppressed_by_verdict.items()
+        )
+        print(f"{label}: {rows}", flush=True)
 
     if fail_open is not None:
         print("")
@@ -398,6 +471,12 @@ def main(argv: list[str] | None = None) -> int:
                         "verdict_buffer_ms": args.verdict_buffer_ms,
                         "require_blast_radius": args.require_blast_radius,
                         "min_blast_nodes": args.min_blast_nodes,
+                        "second_opinion": args.second_opinion,
+                        "second_opinion_agrees_at": args.second_opinion_agrees_at,
+                        "second_opinion_protects_attributed": (
+                            args.second_opinion_protects_attributed
+                        ),
+                        "ablate": args.ablate,
                     },
                     "topology": str(topology_path),
                     "ground_truth": {
@@ -418,14 +497,16 @@ def main(argv: list[str] | None = None) -> int:
                     "meets_target": comparison.meets_target,
                     "fail_open": asdict(fail_open) if fail_open else None,
                     "conditioning": conditioning_lines(conditioned_stdout),
-                    "ablation_timing_only": (
+                    "suppressed_by_verdict": conditioned.suppressed_by_verdict,
+                    "ablation": (
                         {
-                            "pass": asdict(timing_only),
+                            "removed": ablation_label,
+                            "pass": asdict(ablated),
                             "fp_reduction": ablation.fp_reduction,
                             "recall_loss": ablation.recall_loss,
-                            "conditioning": conditioning_lines(timing_only_stdout),
+                            "conditioning": conditioning_lines(ablation_stdout),
                         }
-                        if timing_only is not None and ablation is not None
+                        if ablated is not None and ablation is not None
                         else None
                     ),
                 },
@@ -439,7 +520,7 @@ def main(argv: list[str] | None = None) -> int:
         drop_schema(postgres, shadow_schema)
         drop_schema(postgres, conditioned_schema)
         drop_schema(postgres, fail_open_schema)
-        drop_schema(postgres, timing_only_schema)
+        drop_schema(postgres, ablation_schema)
 
     if fail_open is not None and not fail_open.held:
         return 2
@@ -483,12 +564,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="run the timing-only policy v1-v3 measured, with no topology test",
     )
     p.add_argument(
-        "--no-ablation",
-        dest="ablate_timing_only",
+        "--ablate",
+        choices=("second-opinion", "blast-radius", "none"),
+        default="second-opinion",
+        help="which signal the fourth pass drops, on byte-identical records in the same "
+        "run. A discriminator reported without the version that lacks it is a number with "
+        "nothing to compare against; 'none' skips the pass",
+    )
+    p.add_argument(
+        "--second-opinion",
+        action="store_true",
+        help="run the foundation model as a corroborating second opinion in the "
+        "conditioned and ablation passes (ADR-050). It raises no episodes, so the shadow "
+        "pass and the episode population are unchanged",
+    )
+    p.add_argument(
+        "--second-opinion-agrees-at",
+        type=float,
+        default=3.0,
+        help="the corroborating detector's score above which it counts as having seen the "
+        "same excursion",
+    )
+    p.add_argument(
+        "--no-second-opinion-veto",
+        dest="second_opinion_protects_attributed",
         action="store_false",
-        help="skip the fourth pass that reruns the same policy without the topology test. "
-        "On by default: a discriminator reported without the version that lacks it is a "
-        "number with nothing to compare against",
+        help="let a context event attribute an episode even when both detectors saw it",
     )
     p.add_argument("--plan", type=Path, default=None)
     p.add_argument(

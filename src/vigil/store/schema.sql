@@ -63,6 +63,9 @@ CREATE TABLE IF NOT EXISTS episodes (
 -- Added after the table existed in deployed databases, so it cannot live in the CREATE
 -- above: CREATE TABLE IF NOT EXISTS never alters an existing table.
 ALTER TABLE episodes ADD COLUMN IF NOT EXISTS onset_ms BIGINT;
+-- Which conditioning test decided this episode. Same reason as onset_ms above: added
+-- after the table existed. Null on the unconditioned pass, where nothing decided.
+ALTER TABLE episodes ADD COLUMN IF NOT EXISTS verdict TEXT;
 
 CREATE INDEX IF NOT EXISTS episodes_recent_idx ON episodes (created_at DESC);
 CREATE INDEX IF NOT EXISTS episodes_channel_span_idx ON episodes (channel, t_start_ms);

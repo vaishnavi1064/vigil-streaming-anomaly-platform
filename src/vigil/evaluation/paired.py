@@ -219,6 +219,8 @@ class ObservedEpisode:
     raised_by: str
     peak_score: float
     attributed_to: str | None = None
+    # Which conditioning test decided this episode. Null on the unconditioned pass.
+    verdict: str | None = None
 
     @property
     def paged(self) -> bool:
@@ -256,6 +258,9 @@ class PairedResult:
     # done something different from one that loses the whole fault, and only this shows it.
     fault_channels_total: int = 0
     fault_channels_detected: int = 0
+    # Which test suppressed what, against what the plan says the episode really was. A
+    # reduction number says how many pages went away; this says whether they should have.
+    suppressed_by_verdict: dict[str, dict[str, int]] = field(default_factory=dict)
 
     @property
     def recall(self) -> float:
@@ -358,6 +363,14 @@ def score_pass(
             for f in truth.faults
         ):
             unexplained_pages += 1
+    suppressed_by_verdict: dict[str, dict[str, int]] = {}
+    for o in observed:
+        if o.paged:
+            continue
+        row = suppressed_by_verdict.setdefault(
+            o.verdict or "unconditioned", {"fault": 0, "artifact": 0, "unexplained": 0}
+        )
+        row[classify(o, truth, slack_ms)] += 1
 
     return PairedResult(
         label=label,
@@ -377,7 +390,43 @@ def score_pass(
         faults_by_domain=by_domain,
         fault_channels_total=len(truth.faults),
         fault_channels_detected=sum(1 for f in truth.faults if detected(f)),
+        suppressed_by_verdict=suppressed_by_verdict,
     )
+
+
+def classify(observed: ObservedEpisode, truth: GroundTruth, slack_ms: int = 30_000) -> str:
+    """What this episode actually was, by the plan written before anything scored it."""
+    if any(
+        f.channel == observed.channel
+        and f.overlaps(observed.t_start_ms, observed.t_end_ms, slack_ms=slack_ms)
+        for f in truth.faults
+    ):
+        return "fault"
+    if any(
+        a.channel == observed.channel
+        and a.overlaps(observed.t_start_ms, observed.t_end_ms, slack_ms=slack_ms)
+        for a in truth.artifacts
+    ):
+        return "artifact"
+    return "unexplained"
+
+
+def verdict_breakdown(
+    observed: list[ObservedEpisode], truth: GroundTruth, slack_ms: int = 30_000
+) -> dict[str, dict[str, int]]:
+    """Every verdict against what the episode really was.
+
+    This is what makes a suppression claim checkable. A policy that removes false pages and
+    a policy that removes pages is the same number until the verdicts are read against
+    ground truth, and until now the verdict existed only in the console.
+    """
+    out: dict[str, dict[str, int]] = {}
+    for o in observed:
+        row = out.setdefault(
+            o.verdict or "unconditioned", {"fault": 0, "artifact": 0, "unexplained": 0}
+        )
+        row[classify(o, truth, slack_ms)] += 1
+    return dict(sorted(out.items()))
 
 
 @dataclass

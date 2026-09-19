@@ -35,6 +35,7 @@ from vigil.conditioning.policy import (
     ConditioningThresholds,
     FlaggedWindowIndex,
 )
+from vigil.conditioning.second_opinion import SecondOpinionIndex
 from vigil.conditioning.signals import KafkaContextSource
 from vigil.detectors.foundation import ChronosResidualDetector, FoundationModelUnavailable
 from vigil.detectors.offpath import OffPathScorer
@@ -85,6 +86,7 @@ class DetectionSpine:
         foundation_threshold: float = 6.0,
         foundation_batch: int = 32,
         conditioning: ConditioningPolicy | None = None,
+        second_opinion: SecondOpinionIndex | None = None,
         verdict_buffer_ms: int = 30_000,
         watermark_idle_ms: int = 60_000,
         explanation_worker: ExplanationWorker | None = None,
@@ -133,14 +135,20 @@ class DetectionSpine:
         # baseline's. The two detectors score on different scales and disagree, and the
         # whole point of running them side by side is to see where -- folding the model's
         # opinion into episodes the baseline chose would discard exactly that comparison.
+        #
+        # Unless it is here as a corroborating second opinion (ADR-050), in which case it
+        # raises nothing at all: its scores go to the index the policy reads and the
+        # baseline stays the only detector that pages anyone, so the episode population
+        # stays identical to the shadow pass and the two remain comparable.
         self.foundation = foundation
+        self.second_opinion = second_opinion
         self.foundation_builder = (
             EpisodeBuilder(
                 threshold=foundation_threshold,
                 merge_gap_ms=merge_gap_ms,
                 on_open=self._on_episode_opened,
             )
-            if foundation is not None
+            if foundation is not None and second_opinion is None
             else None
         )
         self.foundation_latencies: list[float] = []
@@ -178,10 +186,30 @@ class DetectionSpine:
             # length outside the lock is safe: a hold racing this call is released by the
             # next reading, and there is always a next reading or a drain.
             return []
-        watermark = self.windows.fleet_watermark_ms(self.watermark_idle_ms)
         with self._conditioning_lock:
-            due = self.barrier.release(watermark)
+            due = self.barrier.release(self._evidence_watermark_ms())
         return [self._decide_and_store(episode) for episode in due]
+
+    def _evidence_watermark_ms(self) -> int | None:
+        """Event time through which every piece of evidence a verdict needs has arrived.
+
+        Call with `_conditioning_lock` held: the second detector's progress is written
+        from the off-path worker thread.
+
+        The fleet watermark alone answers for the other channels (ADR-037). With a second
+        detector in the policy there is a second source to wait for, and deciding ahead of
+        it would read "has not scored this yet" as "found nothing" -- the same mistake
+        G-7 was, one source along. So the barrier releases on the minimum of the two, and
+        the ablation pass waits on the same minimum even though it ignores what it waited
+        for, which is what keeps the two passes differing in the decision alone.
+        """
+        fleet = self.windows.fleet_watermark_ms(self.watermark_idle_ms)
+        if self.second_opinion is None:
+            return fleet
+        model = self.second_opinion.progress_ms(self.watermark_idle_ms)
+        if fleet is None or model is None:
+            return None
+        return min(fleet, model)
 
     def _flush_barrier(self) -> list[int]:
         if self.barrier is None:
@@ -192,6 +220,12 @@ class DetectionSpine:
 
     def _on_foundation_scores(self, scores) -> None:
         """Called from the off-path worker thread; must stay cheap and thread-safe."""
+        if self.second_opinion is not None:
+            with self._conditioning_lock:
+                for score in scores:
+                    self.foundation_latencies.append(score.latency_ms)
+                    self.second_opinion.record(score)
+            return
         with self._foundation_lock:
             for score in scores:
                 self.foundation_latencies.append(score.latency_ms)
@@ -247,11 +281,14 @@ class DetectionSpine:
         if self.offpath is not None:
             # Let the model finish its backlog before closing its episodes, or the last
             # windows of the run would be reported as never scored when in fact they were
-            # merely still queued.
+            # merely still queued. As a second opinion it closes no episodes, but the same
+            # wait matters more there: the verdicts still held are about to be taken, and
+            # they are entitled to every score the model has left in the queue.
             self.offpath.stop()
-            with self._foundation_lock:
-                for episode in self.foundation_builder.close_all():
-                    written.extend(self._persist(episode))
+            if self.foundation_builder is not None:
+                with self._foundation_lock:
+                    for episode in self.foundation_builder.close_all():
+                        written.extend(self._persist(episode))
 
         # The stream is over, so no further watermark will ever arrive to release what the
         # barrier is still holding. Those episodes are decided on the evidence that exists,
@@ -308,7 +345,7 @@ class DetectionSpine:
         if self.barrier is None:
             return [self._store(episode)]
         with self._conditioning_lock:
-            self.barrier.hold(episode, self.windows.fleet_watermark_ms(self.watermark_idle_ms))
+            self.barrier.hold(episode, self._evidence_watermark_ms())
         return []
 
     def _decide_and_store(self, episode) -> int:
@@ -415,6 +452,13 @@ def run(args: argparse.Namespace) -> int:
     store.apply_schema()
 
     foundation = None
+    if args.second_opinion and args.no_foundation_model:
+        print(
+            "--second-opinion needs the foundation model, and --no-foundation-model turns "
+            "it off. Pick one.",
+            file=sys.stderr,
+        )
+        return 2
     if not args.no_foundation_model:
         candidate = ChronosResidualDetector(
             args.foundation_model,
@@ -429,11 +473,16 @@ def run(args: argparse.Namespace) -> int:
         except FoundationModelUnavailable as exc:
             # A degradation, not a failure. ARCHITECTURE.md section 7 promises the platform
             # falls back to the baseline when the model path is unavailable; this is where
-            # that promise is kept.
+            # that promise is kept -- except when the model *is* the measurement, in which
+            # case degrading silently would publish a number for a signal that never ran.
+            if args.second_opinion:
+                print(f"--second-opinion asked for, model unavailable: {exc}", file=sys.stderr)
+                return 2
             log.warning("foundation model unavailable, continuing on the baseline: %s", exc)
 
     conditioning = None
     context_source = None
+    second_opinion = SecondOpinionIndex() if args.second_opinion and foundation else None
     if args.conditioning:
         context_source = KafkaContextSource(
             bootstrap, args.context_topic or kafka.context_topic, group=f"{args.group}-context"
@@ -452,12 +501,16 @@ def run(args: argparse.Namespace) -> int:
             source=context_source,
             index=FlaggedWindowIndex(synchrony_ms=args.synchrony_ms),
             topology=topology,
+            second_opinion=second_opinion,
             thresholds=ConditioningThresholds(
                 min_corroborating_channels=args.min_corroborating_channels,
                 min_scope_fraction=args.min_scope_fraction,
                 synchrony_ms=args.synchrony_ms,
                 require_blast_radius=args.require_blast_radius,
                 min_blast_nodes=args.min_blast_nodes,
+                use_second_opinion=second_opinion is not None and not args.second_opinion_advisory,
+                second_opinion_agrees_at=args.second_opinion_agrees_at,
+                second_opinion_protects_attributed=args.second_opinion_protects_attributed,
             ),
         )
 
@@ -494,6 +547,7 @@ def run(args: argparse.Namespace) -> int:
         foundation_threshold=args.foundation_threshold,
         foundation_batch=args.foundation_batch,
         conditioning=conditioning,
+        second_opinion=second_opinion,
         verdict_buffer_ms=args.verdict_buffer_ms,
         watermark_idle_ms=args.watermark_idle_ms,
         explanation_worker=explanation_worker,
@@ -531,8 +585,14 @@ def run(args: argparse.Namespace) -> int:
     print(
         f"detectors: {spine.baseline.name} (hot path)"
         + (
-            f" + {foundation.name} (off critical path, batch {args.foundation_batch},"
-            f" threshold {args.foundation_threshold})"
+            f" + {foundation.name} (off critical path, batch {args.foundation_batch}, "
+            + (
+                f"second opinion only, agreement at {args.second_opinion_agrees_at:g}"
+                + (", advisory" if args.second_opinion_advisory else "")
+                if second_opinion is not None
+                else f"threshold {args.foundation_threshold}"
+            )
+            + ")"
             if foundation is not None
             else " only -- foundation model not running"
         ),
@@ -777,6 +837,38 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="how many machines the channels that moved must span before a rollout can "
         "explain them. Below 2 the excursion is confined to one failure domain, which is "
         "what a machine failing looks like",
+    )
+    c.add_argument(
+        "--second-opinion",
+        action="store_true",
+        help="let the foundation model corroborate or contradict episodes the baseline "
+        "raised (ADR-050). It raises no episodes of its own in this role, so the episode "
+        "population is unchanged and the run stays comparable to the shadow pass. The "
+        "only conditioning signal that needs no context event, and therefore the only one "
+        "that can answer a false page nothing in the context topic explains (B-6)",
+    )
+    c.add_argument(
+        "--second-opinion-advisory",
+        action="store_true",
+        help="run the second detector, wait for it, record what it said, and let it change "
+        "nothing. The ablation: identical timing and identical evidence to the pass that "
+        "uses it, differing in the decision alone",
+    )
+    c.add_argument(
+        "--second-opinion-agrees-at",
+        type=float,
+        default=3.0,
+        help="the corroborating detector's score above which it counts as having seen the "
+        "same excursion. Deliberately below its own alarm threshold (6.0): the question is "
+        "corroboration, not independent detection, and the generous setting is the one that "
+        "protects recall and costs false-positive reduction",
+    )
+    c.add_argument(
+        "--no-second-opinion-veto",
+        dest="second_opinion_protects_attributed",
+        action="store_false",
+        help="let a context event attribute an episode even when both detectors saw it. "
+        "On by default the other way round: agreement outranks an explanation",
     )
     c.add_argument(
         "--watermark-idle-ms",

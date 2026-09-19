@@ -12,6 +12,7 @@ from vigil.conditioning.policy import (
     FlaggedWindowIndex,
     Verdict,
 )
+from vigil.conditioning.second_opinion import SecondOpinion, SecondOpinionIndex
 from vigil.conditioning.signals import (
     CompositeContextSource,
     ContextSignalSource,
@@ -31,6 +32,8 @@ __all__ = [
     "FlaggedWindowIndex",
     "HeldEpisode",
     "KafkaContextSource",
+    "SecondOpinion",
+    "SecondOpinionIndex",
     "SignalLookup",
     "SignalWindow",
     "StaticContextSource",

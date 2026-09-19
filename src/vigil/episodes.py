@@ -84,6 +84,10 @@ class Episode:
     scores: list[ScoreSample] = field(default_factory=list)
     status: EpisodeStatus = EpisodeStatus.REAL
     attributed_to: str | None = None
+    # Why conditioning decided what it did. None on the unconditioned pass, where nothing
+    # decided anything. Kept beside `status` rather than derived from it because several
+    # verdicts produce the same status and only the verdict says which test spoke.
+    verdict: str | None = None
     explanation: str | None = None
     # Ground truth carried through from the synthetic source for the evaluation harness.
     # Never consulted by any detection or conditioning logic.

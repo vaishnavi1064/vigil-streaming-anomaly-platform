@@ -26,9 +26,18 @@ if it actually disturbed the data: a health record showing zero loss, zero dupli
 low lag cannot account for a value anomaly, whatever else it says. Attributing to a signal
 that could not have caused the effect is superstition, not conditioning.
 
+**4. The second detector's opinion.** The three above all explain an episode by pointing
+at something outside the data, so none of them can touch a false page with no external
+cause -- and B-6 measured that population at 75 of 112 false pages. The platform already
+runs a second detector on the same windows; an episode one detector raises that the other
+cannot see at all is more likely a property of that detector than of the world. This is the
+only signal here that needs no context event, and it is the only one that can suppress an
+episode nothing in the context topic knows anything about.
+
 **Fail-open (ADR-007).** If the context source cannot answer, the episode is raised
 unconditioned. Missing context must never hide a real anomaly. This is the one rule that is
-not a heuristic -- it is a safety property, and it is asserted directly in the tests.
+not a heuristic -- it is a safety property, and it is asserted directly in the tests. The
+second detector is held to the same rule: no opinion is never read as disagreement.
 
 Every decision carries its reason. An operator dismissing an alert deserves to know why the
 system thought it was explainable, and an evaluation that cannot see the reasoning cannot
@@ -40,6 +49,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from vigil.conditioning.second_opinion import SecondOpinion, SecondOpinionIndex
 from vigil.conditioning.signals import ContextSignalSource, SignalWindow
 from vigil.context import ContextEvent, ContextKind, Severity
 from vigil.episodes import Episode, EpisodeStatus
@@ -62,6 +72,12 @@ class Verdict(StrEnum):
     # The deploy's own blast radius is confined to one failure domain, so its footprint and
     # a fault's footprint are the same shape and nothing can tell them apart.
     NARROW_BLAST_RADIUS = "narrow_blast_radius"
+    # The second detector scored the same windows and found nothing. No context event is
+    # involved, which is the point: this is the only verdict that can answer a false page
+    # with no external cause (B-6).
+    SECOND_OPINION_DISSENTS = "second_opinion_dissents"
+    # Both detectors saw it, so it is raised whatever the context says.
+    SECOND_OPINION_AGREES = "second_opinion_agrees"
 
 
 @dataclass(frozen=True)
@@ -198,6 +214,25 @@ class ConditioningThresholds:
     # several machines at once and would pass the node test; it cannot pass this one.
     require_rack_spread: bool = True
 
+    # -- the second detector (ADR-050) --
+    # Whether cross-detector agreement is allowed to change a decision at all. Off
+    # reproduces the v1-v4 policy exactly, which is what keeps those results repeatable
+    # and what the ablation pass runs.
+    use_second_opinion: bool = False
+    # The corroborating detector's score above which it counts as having seen the same
+    # thing. Chronos-Bolt residuals are divided by the model's own predicted spread into
+    # sigma-like units, so this is on roughly the same footing as the baseline's z-score --
+    # and it is set deliberately *below* the second detector's own alarm threshold (6.0),
+    # because the question here is corroboration, not independent detection. Setting it
+    # low makes agreement easier, which protects recall and costs false-positive
+    # reduction: the generous direction is the one that does not flatter the headline.
+    second_opinion_agrees_at: float = 3.0
+    # Whether agreement also overrides a context attribution. On, an episode both
+    # detectors saw is raised even when a deploy could explain it -- "do not suppress
+    # anything both detectors agree on", taken literally. Off, agreement only blocks
+    # suppression by this signal and the context half decides alone.
+    second_opinion_protects_attributed: bool = True
+
 
 @dataclass
 class ConditioningPolicy:
@@ -211,6 +246,11 @@ class ConditioningPolicy:
     # wrong. Empty means no inventory, and then every blast-radius question answers "cannot
     # tell" -- which raises the episode, like every other absence of evidence here.
     topology: FleetTopology = field(default_factory=FleetTopology.empty)
+    # What the corroborating detector scored. Present whenever the second detector is
+    # running, including on the ablation pass where its verdict is recorded and ignored --
+    # collecting it either way is what makes the two passes differ in the decision alone
+    # and not also in when the verdict was taken.
+    second_opinion: SecondOpinionIndex | None = None
 
     decided: int = field(default=0, init=False)
     attributed: int = field(default=0, init=False)
@@ -227,9 +267,28 @@ class ConditioningPolicy:
     # can carry one, and for four published runs the one it carried was always the pipeline
     # event's -- which is why every result reports `isolated=0` (G-16).
     rejections: dict[str, int] = field(default_factory=dict, init=False)
+    # What the second detector said, counted whether or not it was allowed to act. The
+    # ablation pass records these and changes nothing, so the counterfactual is in the
+    # run rather than reconstructed from it.
+    second_opinions: dict[str, int] = field(default_factory=dict, init=False)
+    # Peak second-detector score per decision, kept so the agreement line can be moved
+    # after the fact and the result read off the same run instead of needing another one.
+    second_opinion_peaks: list[float] = field(default_factory=list, init=False)
+    second_opinion_suppressed: int = field(default=0, init=False)
+    second_opinion_vetoed: int = field(default=0, init=False)
 
     def decide(self, episode: Episode) -> Attribution:
         self.decided += 1
+        attribution = self._decide_on_context(episode)
+        return self._record(self._reconsider_with_second_detector(episode, attribution))
+
+    def _decide_on_context(self, episode: Episode) -> Attribution:
+        """Everything that explains an episode by pointing at an operational event.
+
+        Unchanged from v4. Split out so the second detector's opinion is applied to the
+        conclusion rather than woven through it -- the two signals answer different
+        questions and an ablation that cannot separate them measures nothing.
+        """
         lookup = self.source.signals_for(
             SignalWindow(episode.channel, episode.t_start_ms, episode.t_end_ms)
         )
@@ -237,26 +296,21 @@ class ConditioningPolicy:
         if not lookup.available:
             # ADR-007. Not a heuristic: a signal outage must never hide a real anomaly.
             self.failed_open += 1
-            return self._record(
-                Attribution(
-                    status=EpisodeStatus.REAL,
-                    verdict=Verdict.FAIL_OPEN,
-                    attributed_to=None,
-                    reason=(
-                        f"context unavailable ({lookup.source}: {lookup.reason}); "
-                        f"raised unconditioned"
-                    ),
-                )
+            return Attribution(
+                status=EpisodeStatus.REAL,
+                verdict=Verdict.FAIL_OPEN,
+                attributed_to=None,
+                reason=(
+                    f"context unavailable ({lookup.source}: {lookup.reason}); raised unconditioned"
+                ),
             )
 
         if not lookup.events:
-            return self._record(
-                Attribution(
-                    status=EpisodeStatus.REAL,
-                    verdict=Verdict.NO_CONTEXT,
-                    attributed_to=None,
-                    reason="no operational context overlaps this episode",
-                )
+            return Attribution(
+                status=EpisodeStatus.REAL,
+                verdict=Verdict.NO_CONTEXT,
+                attributed_to=None,
+                reason="no operational context overlaps this episode",
             )
 
         # More than one event can overlap. Take the strongest explanation available, and
@@ -268,14 +322,89 @@ class ConditioningPolicy:
         for event in sorted(lookup.events, key=lambda e: e.kind is ContextKind.PIPELINE):
             attribution = self._consider(episode, event)
             if attribution.status is EpisodeStatus.ATTRIBUTED:
-                return self._record(attribution)
+                return attribution
             self.rejections[str(attribution.verdict)] = (
                 self.rejections.get(str(attribution.verdict), 0) + 1
             )
             if best_rejection is None or _more_informative(attribution, best_rejection):
                 best_rejection = attribution
 
-        return self._record(best_rejection)
+        assert best_rejection is not None
+        return best_rejection
+
+    def _reconsider_with_second_detector(
+        self, episode: Episode, attribution: Attribution
+    ) -> Attribution:
+        """Let the corroborating detector confirm or contradict the conclusion (ADR-050).
+
+        Two directions, and they are not symmetric on purpose:
+
+        - **Agreement protects.** Both detectors saw the same span move, so the episode is
+          raised whatever the context half concluded. This can only add pages, never
+          remove them, so it cannot flatter the false-positive number.
+        - **Dissent suppresses**, and only where nothing else already did. This is the one
+          rule here that needs no context event, which is the whole reason it exists -- it
+          is the only thing that can answer the `unexplained` false pages B-6 counted.
+
+        `fail_open` is exempt from suppression. ADR-007 says an episode decided without a
+        context signal is raised unconditioned, and that promise is worth more than the
+        pages this would remove.
+        """
+        opinion = self._second_opinion(episode)
+        if opinion is None:
+            return attribution
+
+        self.second_opinion_peaks.append(opinion.peak_score)
+        outcome = (
+            "abstained" if not opinion.covered else ("agrees" if opinion.agrees else "dissents")
+        )
+        self.second_opinions[outcome] = self.second_opinions.get(outcome, 0) + 1
+
+        if not self.thresholds.use_second_opinion or not opinion.covered:
+            return attribution
+
+        if opinion.agrees:
+            if attribution.status is not EpisodeStatus.ATTRIBUTED:
+                return attribution
+            if not self.thresholds.second_opinion_protects_attributed:
+                return attribution
+            self.second_opinion_vetoed += 1
+            return Attribution(
+                status=EpisodeStatus.REAL,
+                verdict=Verdict.SECOND_OPINION_AGREES,
+                attributed_to=None,
+                reason=(
+                    f"{attribution.attributed_to} could explain this, but {opinion.reason}; "
+                    f"two detectors agreeing outranks an explanation"
+                ),
+                corroborating_channels=attribution.corroborating_channels,
+                scope_size=attribution.scope_size,
+            )
+
+        if attribution.status is EpisodeStatus.ATTRIBUTED:
+            return attribution
+        if attribution.verdict is Verdict.FAIL_OPEN:
+            return attribution
+        self.second_opinion_suppressed += 1
+        return Attribution(
+            status=EpisodeStatus.ATTRIBUTED,
+            verdict=Verdict.SECOND_OPINION_DISSENTS,
+            attributed_to=None,
+            reason=(
+                f"{opinion.reason}; one detector alone on a span the other watched and "
+                f"found ordinary is more likely that detector than the world"
+            ),
+        )
+
+    def _second_opinion(self, episode: Episode) -> SecondOpinion | None:
+        if self.second_opinion is None:
+            return None
+        return self.second_opinion.opinion(
+            episode.channel,
+            episode.t_start_ms,
+            episode.t_end_ms,
+            self.thresholds.second_opinion_agrees_at,
+        )
 
     def _consider(self, episode: Episode, event: ContextEvent) -> Attribution:
         if not event.applies_to(episode.channel):
@@ -505,6 +634,11 @@ class ConditioningPolicy:
         attribution = self.decide(episode)
         episode.status = attribution.status
         episode.attributed_to = attribution.attributed_to
+        # Persisted from here on. G-16 was a reporting defect about which verdict an
+        # episode carried, and it was only findable because the console printed one; a
+        # verdict that never reaches the store cannot be cross-checked against ground
+        # truth at all, which is exactly what reading the second detector's effect needs.
+        episode.verdict = str(attribution.verdict)
         return attribution
 
     def summary(self) -> str:
@@ -520,6 +654,8 @@ class ConditioningPolicy:
         if self.rejections:
             reached = ", ".join(f"{k}={v}" for k, v in sorted(self.rejections.items()))
             line += f"\n  rejections reached (an episode carries one): {reached}"
+        if self.second_opinions:
+            line += f"\n  {self.second_opinion_report()}"
         if not self.synchronous_siblings:
             return line
         return f"{line}\n  {self.evidence_report()}"
@@ -543,6 +679,49 @@ class ConditioningPolicy:
             f"({sync_any} decisions with >=1) | "
             f"present anywhere in the episode span mean "
             f"{sum(self.siblings_in_span) / n:.2f} ({span_any} decisions with >=1)"
+        )
+
+    def second_opinion_report(self) -> str:
+        """What the corroborating detector said, and what was done about it.
+
+        Reported on the ablation pass too, where the policy ignores it. A signal whose
+        effect is only visible in the pass that uses it cannot be told apart from a signal
+        that was never there.
+        """
+        if self.second_opinion is None or not self.second_opinions:
+            return "second detector: not running"
+        counts = ", ".join(f"{k}={v}" for k, v in sorted(self.second_opinions.items()))
+        acted = (
+            f"suppressed {self.second_opinion_suppressed}, "
+            f"vetoed an attribution {self.second_opinion_vetoed}"
+            if self.thresholds.use_second_opinion
+            else "advisory only, changed nothing"
+        )
+        line = (
+            f"second detector ({self.second_opinion.detector or 'unnamed'}) over "
+            f"{len(self.second_opinion_peaks)} decisions at agreement "
+            f"{self.thresholds.second_opinion_agrees_at:g}: {counts} | {acted}"
+        )
+        return f"{line}\n  {self.agreement_sensitivity()}"
+
+    def agreement_sensitivity(self) -> str:
+        """How many decisions would have counted as agreement at other thresholds.
+
+        Published because one threshold's result is unfalsifiable: a reader cannot tell a
+        line chosen on principle from one chosen because it flattered the run. The default
+        is fixed before the run and this curve is reported beside it.
+        """
+        peaks = [p for p in self.second_opinion_peaks if p > 0.0]
+        if not peaks:
+            return "agreement sensitivity: no scored spans"
+        points = [f"{bar:g}:{sum(1 for p in peaks if p >= bar)}" for bar in (1, 2, 3, 4, 6, 8)]
+        ordered = sorted(peaks)
+        return (
+            f"agreement sensitivity over {len(peaks)} scored spans "
+            f"(bar:agreeing) {' '.join(points)} | peak p50 "
+            f"{ordered[len(ordered) // 2]:.1f} p90 "
+            f"{ordered[min(int(len(ordered) * 0.9), len(ordered) - 1)]:.1f} "
+            f"max {ordered[-1]:.1f}"
         )
 
 
