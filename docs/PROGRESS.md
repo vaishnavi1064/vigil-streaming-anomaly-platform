@@ -193,6 +193,9 @@ ADRs live in `docs/DECISIONS.md`. Design-phase ADR-001..008 predate this build.
 | 042 | The explanation is evidence; it may not move the symptom or the query | 4 |
 | 039 | Completion-only masking via collator, fp16 on V100, and a memory-safe resumable eval | 5 |
 | 040 | Out-of-set symptoms and prose licences are what made the fine-tune winnable | 5 |
+| 050 | The second detector corroborates episodes; it does not raise them | 3 |
+| 051 | A verdict waits for the second detector too, and the ablation waits with it | 3 |
+| 052 | The conditioning verdict is persisted, not only logged | 3 |
 
 ---
 
