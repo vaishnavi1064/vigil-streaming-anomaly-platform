@@ -49,6 +49,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from vigil.conditioning.persistence import EpisodePersistence, PersistenceIndex
 from vigil.conditioning.second_opinion import SecondOpinion, SecondOpinionIndex
 from vigil.conditioning.signals import ContextSignalSource, SignalWindow
 from vigil.context import ContextEvent, ContextKind, Severity
@@ -78,6 +79,12 @@ class Verdict(StrEnum):
     SECOND_OPINION_DISSENTS = "second_opinion_dissents"
     # Both detectors saw it, so it is raised whatever the context says.
     SECOND_OPINION_AGREES = "second_opinion_agrees"
+    # The excursion occupied one window and never came back. Like the two above it needs
+    # no context event; unlike them it needs no second detector either (ADR-053).
+    NO_PERSISTENCE = "no_persistence"
+    # It lasted, so a context event is refused. Only reachable with the persistence veto
+    # switched on, which is not the default.
+    PERSISTENT = "persistent"
 
 
 @dataclass(frozen=True)
@@ -152,6 +159,26 @@ class FlaggedWindowIndex:
             if any(abs(start - t_start_ms) <= tolerance for start in starts):
                 out.add(channel)
         return out
+
+    def recurrences_near(self, channel: str, t_start_ms: int, within_ms: int) -> int:
+        """Other departures on **this** channel within `within_ms` either side of this one.
+
+        The episode asking the question is itself in the index, so an exact tie is its own
+        entry and is excluded. Two distinct episodes on one channel cannot share an onset:
+        the builder merges anything closer than its merge gap into one episode, so a second
+        entry at the same instant would be the same episode counted twice.
+
+        Symmetric in time, which is affordable only because ADR-037's barrier already holds
+        a verdict until the fleet watermark has passed the onset by its buffer -- so at a
+        recurrence width no larger than that buffer, the forward half is evidence the policy
+        is guaranteed to have rather than evidence it happens to have.
+        """
+        starts = self._starts.get(channel)
+        if not starts:
+            return 0
+        return sum(
+            1 for start in starts if start != t_start_ms and abs(start - t_start_ms) <= within_ms
+        )
 
     def flagged_in(self, t_start_ms: int, t_end_ms: int) -> set[str]:
         """Channels flagged anywhere in this span. Retained for the loose comparison.
@@ -233,6 +260,34 @@ class ConditioningThresholds:
     # suppression by this signal and the context half decides alone.
     second_opinion_protects_attributed: bool = True
 
+    # -- temporal persistence (ADR-053) --
+    # Whether an excursion's duration is allowed to change a decision. Off reproduces
+    # every policy before v6b, which is what the ablation pass runs.
+    use_persistence: bool = False
+    # Flagged windows an episode must occupy before it counts as a state the channel was
+    # in rather than one window's statistics. Two, from the window geometry: consecutive
+    # windows overlap by 20 of their 30 seconds, so anything present for one full slide is
+    # inside two of them.
+    min_persistence_windows: int = 2
+    # A second departure on the same channel this close rescues a one-window episode: two
+    # flickers in quick succession are a pattern. One window width, which is also the
+    # verdict barrier's buffer, so the forward half of the comparison is guaranteed
+    # evidence. Wider is not safer -- at this density minutes-wide recurrence is satisfied
+    # by coincidence and would protect everything, which is the v1 failure. 0 disables.
+    persistence_recurrence_ms: int = 30_000
+    # Fraction of the detection threshold a neighbouring window must reach to count as a
+    # shoulder -- an excursion that was already building. **Off by default and measured
+    # anyway**: the report prints what it would have rescued at several fractions, so it
+    # can be switched on from evidence rather than from disappointment.
+    persistence_shoulder_fraction: float = 0.0
+    # Whether persistence also overrides a context attribution. **Off**, unlike the second
+    # detector's veto, and the asymmetry is deliberate: most episodes are persistent, so a
+    # persistence veto would refuse nearly every context attribution and leave a policy
+    # that suppresses one-window blips and does nothing else. That would replace the
+    # context half rather than leave it unchanged, and it would make the ablation measure
+    # the removal of v4 rather than the addition of v6b.
+    persistence_protects_attributed: bool = False
+
 
 @dataclass
 class ConditioningPolicy:
@@ -251,6 +306,10 @@ class ConditioningPolicy:
     # collecting it either way is what makes the two passes differ in the decision alone
     # and not also in when the verdict was taken.
     second_opinion: SecondOpinionIndex | None = None
+    # Every window the baseline scored, flagged or not. Needed only for the shoulder
+    # measurement; the duration test reads the episode's own window count, and the
+    # recurrence test reads the flagged-window index that already exists.
+    persistence: PersistenceIndex | None = None
 
     decided: int = field(default=0, init=False)
     attributed: int = field(default=0, init=False)
@@ -276,11 +335,21 @@ class ConditioningPolicy:
     second_opinion_peaks: list[float] = field(default_factory=list, init=False)
     second_opinion_suppressed: int = field(default=0, init=False)
     second_opinion_vetoed: int = field(default=0, init=False)
+    # What the duration test saw, counted whether or not it was allowed to act.
+    persistence_outcomes: dict[str, int] = field(default_factory=dict, init=False)
+    persistence_windows_seen: list[int] = field(default_factory=list, init=False)
+    persistence_suppressed: int = field(default=0, init=False)
+    persistence_vetoed: int = field(default=0, init=False)
+    # One-window episodes, and what each rescue would have saved. Recorded for every run
+    # including the ablation, so a rescue can be argued for from this run's numbers.
+    _flicker_recurrences: list[int] = field(default_factory=list, init=False, repr=False)
+    _flicker_shoulders: list[int] = field(default_factory=list, init=False, repr=False)
 
     def decide(self, episode: Episode) -> Attribution:
         self.decided += 1
         attribution = self._decide_on_context(episode)
-        return self._record(self._reconsider_with_second_detector(episode, attribution))
+        attribution = self._reconsider_with_second_detector(episode, attribution)
+        return self._record(self._reconsider_with_persistence(episode, attribution))
 
     def _decide_on_context(self, episode: Episode) -> Attribution:
         """Everything that explains an episode by pointing at an operational event.
@@ -404,6 +473,161 @@ class ConditioningPolicy:
             episode.t_start_ms,
             episode.t_end_ms,
             self.thresholds.second_opinion_agrees_at,
+        )
+
+    def _reconsider_with_persistence(
+        self, episode: Episode, attribution: Attribution
+    ) -> Attribution:
+        """Did the excursion last, or did the detector blink once (ADR-053)?
+
+        Independent of the second detector on purpose. Agreement asks whether something
+        else saw the same thing; this asks whether the thing was there in the next window,
+        which is answerable from the baseline's own output and is therefore available on a
+        run with no model at all.
+
+        The two directions are not symmetric, and differently from the second detector's:
+
+        - **Persistence protects only from this test**, not from the context half. Most
+          episodes are persistent, so letting duration veto a deploy attribution would
+          refuse nearly every attribution the context half makes -- replacing it rather
+          than leaving it unchanged. Configurable, and the reasoning is in the threshold's
+          comment.
+        - **A flicker suppresses**, and only where nothing else already did.
+
+        `fail_open` is exempt, as everywhere: an episode decided without a context signal
+        is raised unconditioned (ADR-007).
+        """
+        persistence = self._persistence_of(episode)
+        if persistence is None:
+            return attribution
+
+        self.persistence_windows_seen.append(persistence.flagged_windows)
+        outcome = (
+            "abstained"
+            if not persistence.covered
+            else ("persistent" if persistence.persistent else "flicker")
+        )
+        self.persistence_outcomes[outcome] = self.persistence_outcomes.get(outcome, 0) + 1
+        if persistence.flagged_windows < self.thresholds.min_persistence_windows:
+            # Counted for every one-window episode, acted on or not, so what a rescue would
+            # have bought is a number from this run rather than an argument about it.
+            self._flicker_recurrences.append(persistence.recurrences)
+            self._flicker_shoulders.append(persistence.shoulder_windows)
+
+        if not self.thresholds.use_persistence or not persistence.covered:
+            return attribution
+
+        if persistence.persistent:
+            if attribution.status is not EpisodeStatus.ATTRIBUTED:
+                return attribution
+            if not self.thresholds.persistence_protects_attributed:
+                return attribution
+            self.persistence_vetoed += 1
+            return Attribution(
+                status=EpisodeStatus.REAL,
+                verdict=Verdict.PERSISTENT,
+                attributed_to=None,
+                reason=(
+                    f"{attribution.attributed_to} could explain this, but {persistence.reason}; "
+                    f"an excursion that lasted is not a rollout blip"
+                ),
+                corroborating_channels=attribution.corroborating_channels,
+                scope_size=attribution.scope_size,
+            )
+
+        if attribution.status is EpisodeStatus.ATTRIBUTED:
+            return attribution
+        if attribution.verdict is Verdict.FAIL_OPEN:
+            return attribution
+        self.persistence_suppressed += 1
+        return Attribution(
+            status=EpisodeStatus.ATTRIBUTED,
+            verdict=Verdict.NO_PERSISTENCE,
+            attributed_to=None,
+            reason=(
+                f"{persistence.reason}; a state the channel was in would still be there a "
+                f"slide later, and this was not"
+            ),
+        )
+
+    def _persistence_of(self, episode: Episode) -> EpisodePersistence | None:
+        """What the duration test saw. None when the test is not configured at all.
+
+        The duration itself comes from the episode, not from an index: `window_count` is
+        the number of windows the builder merged, which is exactly the question. The index
+        is consulted only for the shoulder measurement, so a run with the shoulder fraction
+        at zero needs no index and still gets a verdict.
+        """
+        if not self.thresholds.use_persistence and self.persistence is None:
+            return None
+
+        flagged = episode.window_count
+        recurrence_ms = self.thresholds.persistence_recurrence_ms
+        recurrences = (
+            self.index.recurrences_near(episode.channel, episode.began_ms, recurrence_ms)
+            if recurrence_ms > 0
+            else 0
+        )
+        shoulder = (
+            self.persistence.shoulder_before(
+                episode.channel,
+                episode.t_start_ms,
+                episode.threshold,
+                self.thresholds.persistence_shoulder_fraction,
+            )
+            if self.persistence is not None
+            else 0
+        )
+
+        needed = self.thresholds.min_persistence_windows
+        if flagged >= needed:
+            return EpisodePersistence(
+                covered=True,
+                persistent=True,
+                flagged_windows=flagged,
+                recurrences=recurrences,
+                shoulder_windows=shoulder,
+                reason=(
+                    f"the excursion held the threshold for {flagged} consecutive windows "
+                    f"(persistence needs {needed})"
+                ),
+            )
+        if recurrences:
+            return EpisodePersistence(
+                covered=True,
+                persistent=True,
+                flagged_windows=flagged,
+                recurrences=recurrences,
+                shoulder_windows=shoulder,
+                reason=(
+                    f"one window, but {episode.channel} departed {recurrences} other "
+                    f"time(s) within {recurrence_ms / 1000:g}s -- a recurring signature "
+                    f"rather than a single blip"
+                ),
+            )
+        if shoulder and flagged + shoulder >= needed:
+            return EpisodePersistence(
+                covered=True,
+                persistent=True,
+                flagged_windows=flagged,
+                recurrences=recurrences,
+                shoulder_windows=shoulder,
+                reason=(
+                    f"one window over the threshold, with {shoulder} window(s) before it "
+                    f"already at {self.thresholds.persistence_shoulder_fraction:.0%} of it "
+                    f"-- the excursion was building"
+                ),
+            )
+        return EpisodePersistence(
+            covered=True,
+            persistent=False,
+            flagged_windows=flagged,
+            recurrences=recurrences,
+            shoulder_windows=shoulder,
+            reason=(
+                f"{episode.channel} crossed the threshold in exactly {flagged} window and "
+                f"in neither neighbouring view built from the same 20 seconds of samples"
+            ),
         )
 
     def _consider(self, episode: Episode, event: ContextEvent) -> Attribution:
@@ -656,6 +880,8 @@ class ConditioningPolicy:
             line += f"\n  rejections reached (an episode carries one): {reached}"
         if self.second_opinions:
             line += f"\n  {self.second_opinion_report()}"
+        if self.persistence_outcomes:
+            line += f"\n  {self.persistence_report()}"
         if not self.synchronous_siblings:
             return line
         return f"{line}\n  {self.evidence_report()}"
@@ -722,6 +948,60 @@ class ConditioningPolicy:
             f"{ordered[len(ordered) // 2]:.1f} p90 "
             f"{ordered[min(int(len(ordered) * 0.9), len(ordered) - 1)]:.1f} "
             f"max {ordered[-1]:.1f}"
+        )
+
+    def persistence_report(self) -> str:
+        """What the duration test saw, and what was done about it.
+
+        Printed on the ablation pass too, where the policy ignores it, for the same reason
+        the second detector's is: a signal whose effect is only visible in the pass that
+        uses it cannot be told apart from a signal that was never there.
+        """
+        if not self.persistence_outcomes:
+            return "persistence: not running"
+        counts = ", ".join(f"{k}={v}" for k, v in sorted(self.persistence_outcomes.items()))
+        acted = (
+            f"suppressed {self.persistence_suppressed}, "
+            f"vetoed an attribution {self.persistence_vetoed}"
+            if self.thresholds.use_persistence
+            else "advisory only, changed nothing"
+        )
+        line = (
+            f"persistence over {len(self.persistence_windows_seen)} decisions at "
+            f"{self.thresholds.min_persistence_windows} window(s), recurrence "
+            f"{self.thresholds.persistence_recurrence_ms / 1000:g}s, shoulder "
+            f"{self.thresholds.persistence_shoulder_fraction:g}: {counts} | {acted}"
+        )
+        return f"{line}\n  {self.persistence_sensitivity()}"
+
+    def persistence_sensitivity(self) -> str:
+        """The duration distribution, and what each rescue would have bought.
+
+        Published for the same reason the agreement curve is: one threshold's result is
+        unfalsifiable, and a reader cannot otherwise tell a line drawn from the window
+        geometry from one drawn around the answer. The rescue columns report what the two
+        tests that are *not* wired into the verdict would have saved, so switching either
+        on is a decision made from this run's numbers.
+        """
+        seen = self.persistence_windows_seen
+        if not seen:
+            return "persistence sensitivity: no decisions"
+        points = " ".join(f"{n}:{sum(1 for w in seen if w >= n)}" for n in (1, 2, 3, 4, 6))
+        ordered = sorted(seen)
+        rescue = ""
+        if self._flicker_recurrences:
+            recurring = sum(1 for r in self._flicker_recurrences if r)
+            shouldered = sum(1 for sh in self._flicker_shoulders if sh)
+            rescue = (
+                f" | of {len(self._flicker_recurrences)} one-window episodes, "
+                f"{recurring} had a recurrence and {shouldered} a shoulder"
+            )
+        return (
+            f"persistence sensitivity over {len(seen)} decisions (windows:episodes at least "
+            f"that long) {points} | window count p50 "
+            f"{ordered[len(ordered) // 2]} p90 "
+            f"{ordered[min(int(len(ordered) * 0.9), len(ordered) - 1)]} "
+            f"max {ordered[-1]}{rescue}"
         )
 
 

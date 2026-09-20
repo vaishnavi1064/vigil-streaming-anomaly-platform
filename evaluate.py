@@ -138,6 +138,8 @@ def conditioning_lines(stdout: str) -> list[str]:
         "context events seen",
         "second detector",
         "agreement sensitivity",
+        "persistence over",
+        "persistence sensitivity",
     )
     return [line.strip() for line in stdout.splitlines() if line.strip().startswith(keep)]
 
@@ -284,7 +286,32 @@ def main(argv: list[str] | None = None) -> int:
         if args.require_blast_radius
         else ["--no-blast-radius"]
     )
-    conditioning_args = [*timing_args, *blast_radius_args]
+    # The duration test. Unlike the second detector it needs no model, so a run with
+    # persistence alone changes nothing about *when* a verdict is taken -- the barrier is
+    # v4's barrier, and the ablation is v4's policy under v4's timing.
+    persistence_args = (
+        [
+            "--persistence",
+            "--min-persistence-windows",
+            str(args.min_persistence_windows),
+            "--persistence-recurrence-ms",
+            str(args.persistence_recurrence_ms),
+            "--persistence-shoulder-fraction",
+            str(args.persistence_shoulder_fraction),
+        ]
+        + (["--persistence-vetoes-attribution"] if args.persistence_vetoes_attribution else [])
+        if args.persistence
+        else []
+    )
+    # What the fail-open pass runs: the context signal and nothing else. ADR-007's promise
+    # is about the context source, and the two signals that need no context event -- the
+    # second detector and the duration test -- have their own abstention rules with their
+    # own unit tests. Letting either of them decide here would turn a check on one
+    # mechanism into a check on three, and the first smoke run of the duration test did
+    # exactly that: 7 of 14 episodes suppressed in a pass whose whole purpose is to
+    # reproduce the shadow pass episode for episode.
+    context_conditioning_args = [*timing_args, *blast_radius_args]
+    conditioning_args = [*context_conditioning_args, *persistence_args]
 
     # --- 3. shadow: the unconditioned baseline ---
     make_schema(postgres, shadow_schema)
@@ -337,6 +364,25 @@ def main(argv: list[str] | None = None) -> int:
             env={"PGOPTIONS": f"-c search_path={ablation_schema}"},
             timeout=1800,
         )
+    elif args.ablate == "persistence" and args.persistence:
+        # The duration test still runs and still records what it saw; it may not decide.
+        # Same reasoning as the second detector's ablation, and cheaper to guarantee here
+        # because nothing about the timing depends on it.
+        ablation_label = "the duration test, advisory only"
+        make_schema(postgres, ablation_schema)
+        ablation_stdout = run_step(
+            "ablation pass (conditioning ON, persistence ADVISORY)",
+            [
+                *detector_args,
+                *second_opinion_args,
+                "--persistence-advisory",
+                "--group",
+                f"vigil-eval-ablate-{stamp}",
+                *conditioning_args,
+            ],
+            env={"PGOPTIONS": f"-c search_path={ablation_schema}"},
+            timeout=1800,
+        )
     elif args.ablate == "blast-radius" and args.require_blast_radius:
         ablation_label = "timing and scope only, no blast-radius test"
         make_schema(postgres, ablation_schema)
@@ -358,11 +404,6 @@ def main(argv: list[str] | None = None) -> int:
     fail_open: FailOpenCheck | None = None
     if args.verify_fail_open:
         make_schema(postgres, fail_open_schema)
-        # Context-conditioning only, deliberately. ADR-007's promise is about the context
-        # signal: an episode decided with no context must be raised unconditioned. The
-        # second detector is a different source with its own abstention rule (unit-tested
-        # in tests/test_second_opinion.py), and letting it suppress here would turn a
-        # check on one mechanism into a check on two.
         run_step(
             "fail-open pass (conditioning ON, context topic empty, context signal only)",
             [
@@ -372,7 +413,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"vigil-eval-failopen-{stamp}",
                 "--context-topic",
                 f"{kafka.context_topic}.empty",
-                *conditioning_args,
+                *context_conditioning_args,
             ],
             env={"PGOPTIONS": f"-c search_path={fail_open_schema}"},
             timeout=1800,
@@ -491,6 +532,11 @@ def main(argv: list[str] | None = None) -> int:
                         "second_opinion_protects_attributed": (
                             args.second_opinion_protects_attributed
                         ),
+                        "persistence": args.persistence,
+                        "min_persistence_windows": args.min_persistence_windows,
+                        "persistence_recurrence_ms": args.persistence_recurrence_ms,
+                        "persistence_shoulder_fraction": args.persistence_shoulder_fraction,
+                        "persistence_vetoes_attribution": args.persistence_vetoes_attribution,
                         "ablate": args.ablate,
                     },
                     "topology": str(topology_path),
@@ -580,7 +626,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--ablate",
-        choices=("second-opinion", "blast-radius", "none"),
+        choices=("second-opinion", "persistence", "blast-radius", "none"),
         default="second-opinion",
         help="which signal the fourth pass drops, on byte-identical records in the same "
         "run. A discriminator reported without the version that lacks it is a number with "
@@ -605,6 +651,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         dest="second_opinion_protects_attributed",
         action="store_false",
         help="let a context event attribute an episode even when both detectors saw it",
+    )
+    p.add_argument(
+        "--persistence",
+        action="store_true",
+        help="condition on how long an excursion lasted (ADR-053). Needs no model and no "
+        "context event, so the verdict barrier is unchanged and the ablation pass is the "
+        "v4 policy under v4 timing",
+    )
+    p.add_argument("--min-persistence-windows", type=int, default=2)
+    p.add_argument("--persistence-recurrence-ms", type=int, default=30_000)
+    p.add_argument("--persistence-shoulder-fraction", type=float, default=0.0)
+    p.add_argument(
+        "--persistence-vetoes-attribution",
+        action="store_true",
+        help="let a persistent episode refuse a context attribution. Off by default: most "
+        "episodes are persistent, so this replaces the context half rather than adding to it",
     )
     p.add_argument("--plan", type=Path, default=None)
     p.add_argument(

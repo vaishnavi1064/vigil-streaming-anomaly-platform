@@ -5,6 +5,7 @@ happening. The mechanism is one join and one policy, and both are here.
 """
 
 from vigil.conditioning.barrier import CorroborationBarrier, HeldEpisode
+from vigil.conditioning.persistence import EpisodePersistence, PersistenceIndex
 from vigil.conditioning.policy import (
     Attribution,
     ConditioningPolicy,
@@ -29,9 +30,11 @@ __all__ = [
     "ConditioningThresholds",
     "ContextSignalSource",
     "CorroborationBarrier",
+    "EpisodePersistence",
     "FlaggedWindowIndex",
     "HeldEpisode",
     "KafkaContextSource",
+    "PersistenceIndex",
     "SecondOpinion",
     "SecondOpinionIndex",
     "SignalLookup",

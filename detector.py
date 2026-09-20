@@ -30,6 +30,7 @@ from collections import Counter, deque
 from confluent_kafka import Consumer, KafkaError, TopicPartition
 
 from vigil.conditioning.barrier import CorroborationBarrier
+from vigil.conditioning.persistence import PersistenceIndex
 from vigil.conditioning.policy import (
     ConditioningPolicy,
     ConditioningThresholds,
@@ -87,6 +88,7 @@ class DetectionSpine:
         foundation_batch: int = 32,
         conditioning: ConditioningPolicy | None = None,
         second_opinion: SecondOpinionIndex | None = None,
+        persistence: PersistenceIndex | None = None,
         verdict_buffer_ms: int = 30_000,
         watermark_idle_ms: int = 60_000,
         explanation_worker: ExplanationWorker | None = None,
@@ -110,6 +112,10 @@ class DetectionSpine:
         # None means the shadow pass: detection runs unconditioned, which is the baseline
         # every conditioned result is measured against (ADR-016).
         self.conditioning = conditioning
+        # Every window the baseline scores, flagged or not, so the duration test can ask
+        # what stood next to an episode (ADR-053). Built only when something reads it: an
+        # unread index would be a per-window allocation on the hot path for nothing.
+        self.persistence = persistence
         self.attributed = 0
         # The verdict waits behind an event-time barrier so the corroboration index holds
         # every sibling that could exonerate the episode, not merely the ones that happened
@@ -255,6 +261,8 @@ class DetectionSpine:
             if score is None:
                 continue
             self.latencies.append(score.latency_ms)
+            if self.persistence is not None:
+                self.persistence.record(score)
             episode = self.builder.add(score, window.injected)
             if episode is not None:
                 written.extend(self._persist(episode))
@@ -272,6 +280,8 @@ class DetectionSpine:
             if score is None:
                 continue
             self.latencies.append(score.latency_ms)
+            if self.persistence is not None:
+                self.persistence.record(score)
             episode = self.builder.add(score, window.injected)
             if episode is not None:
                 written.extend(self._persist(episode))
@@ -483,6 +493,13 @@ def run(args: argparse.Namespace) -> int:
     conditioning = None
     context_source = None
     second_opinion = SecondOpinionIndex() if args.second_opinion and foundation else None
+    # Built whenever the duration test may run, including the advisory pass that records
+    # what it saw and changes nothing, and whenever a shoulder measurement is asked for.
+    persistence = (
+        PersistenceIndex()
+        if args.conditioning and (args.persistence or args.persistence_advisory)
+        else None
+    )
     if args.conditioning:
         context_source = KafkaContextSource(
             bootstrap, args.context_topic or kafka.context_topic, group=f"{args.group}-context"
@@ -502,6 +519,7 @@ def run(args: argparse.Namespace) -> int:
             index=FlaggedWindowIndex(synchrony_ms=args.synchrony_ms),
             topology=topology,
             second_opinion=second_opinion,
+            persistence=persistence,
             thresholds=ConditioningThresholds(
                 min_corroborating_channels=args.min_corroborating_channels,
                 min_scope_fraction=args.min_scope_fraction,
@@ -511,6 +529,11 @@ def run(args: argparse.Namespace) -> int:
                 use_second_opinion=second_opinion is not None and not args.second_opinion_advisory,
                 second_opinion_agrees_at=args.second_opinion_agrees_at,
                 second_opinion_protects_attributed=args.second_opinion_protects_attributed,
+                use_persistence=args.persistence and not args.persistence_advisory,
+                min_persistence_windows=args.min_persistence_windows,
+                persistence_recurrence_ms=args.persistence_recurrence_ms,
+                persistence_shoulder_fraction=args.persistence_shoulder_fraction,
+                persistence_protects_attributed=args.persistence_protects_attributed,
             ),
         )
 
@@ -548,6 +571,7 @@ def run(args: argparse.Namespace) -> int:
         foundation_batch=args.foundation_batch,
         conditioning=conditioning,
         second_opinion=second_opinion,
+        persistence=persistence,
         verdict_buffer_ms=args.verdict_buffer_ms,
         watermark_idle_ms=args.watermark_idle_ms,
         explanation_worker=explanation_worker,
@@ -869,6 +893,55 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_false",
         help="let a context event attribute an episode even when both detectors saw it. "
         "On by default the other way round: agreement outranks an explanation",
+    )
+    c.add_argument(
+        "--persistence",
+        action="store_true",
+        help="suppress an episode that held the threshold for fewer than "
+        "--min-persistence-windows consecutive windows and never came back (ADR-053). "
+        "Needs no context event and no second detector: a state the channel was in is "
+        "still there a slide later, and one window's statistics are not",
+    )
+    c.add_argument(
+        "--persistence-advisory",
+        action="store_true",
+        help="record what the duration test saw and let it change nothing. The ablation, "
+        "and the only way the v1-v6a results stay reproducible",
+    )
+    c.add_argument(
+        "--min-persistence-windows",
+        type=int,
+        default=2,
+        help="consecutive flagged windows an episode must occupy to count as persistent. "
+        "Two, from the geometry: consecutive windows overlap by 20 of their 30 seconds, so "
+        "anything present for one full slide is inside two of them",
+    )
+    c.add_argument(
+        "--persistence-recurrence-ms",
+        type=int,
+        default=30_000,
+        help="a second departure on the same channel this close rescues a one-window "
+        "episode. One window width, which is also the verdict barrier's buffer, so the "
+        "forward half of the comparison is evidence the policy is guaranteed to have. "
+        "Wider is not safer: at realistic density a minutes-wide window is satisfied by "
+        "coincidence and protects everything. 0 disables",
+    )
+    c.add_argument(
+        "--persistence-shoulder-fraction",
+        type=float,
+        default=0.0,
+        help="fraction of the detection threshold a preceding window must reach to count "
+        "as an excursion that was already building. Off by default and measured anyway -- "
+        "the run reports what it would have rescued",
+    )
+    c.add_argument(
+        "--persistence-vetoes-attribution",
+        dest="persistence_protects_attributed",
+        action="store_true",
+        help="let a persistent episode refuse a context attribution. Off by default, "
+        "unlike the second detector's veto: most episodes are persistent, so this would "
+        "refuse nearly every attribution the context half makes and replace it rather "
+        "than leave it unchanged",
     )
     c.add_argument(
         "--watermark-idle-ms",
