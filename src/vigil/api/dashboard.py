@@ -497,14 +497,32 @@ function drawStream(data) {
                              x2: CHART.padL + plotW, y2: CHART.padT + plotH, class: "axis" }));
 
   // Episode bands go behind the lines so a marker never hides the excursion it marks.
-  const byChannel = new Map(channels.map((c, i) => [c.channel, i]));
+  //
+  // Overlapping spans are merged into a union first. Drawn per episode, ten concurrent
+  // episodes stack ten translucent rectangles and the chart turns solid -- which reads as
+  // "everything is an anomaly" rather than as ten of them. The union draws each covered
+  // instant exactly once, so the shading means "inside an episode" at a constant weight
+  // however many happen to overlap there.
+  const spans = (data.episodes || [])
+    .map(ep => [Math.max(ep.t_start_ms, t0), Math.min(ep.t_end_ms, t1)])
+    .filter(([from, to]) => to >= t0 && from <= t1)
+    .sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const [from, to] of spans) {
+    const last = merged[merged.length - 1];
+    if (last && from <= last[1]) last[1] = Math.max(last[1], to);
+    else merged.push([from, to]);
+  }
+  for (const [from, to] of merged) {
+    const bx = x(from);
+    svg.append(svgEl("rect", { x: bx, y: CHART.padT, width: Math.max(2, x(to) - bx),
+                               height: plotH, class: "ep-band" }));
+  }
+  // Onset rules stay per episode: the band says where episodes were, these say when each
+  // one began, and merging those would lose the count.
   for (const ep of (data.episodes || [])) {
-    const from = Math.max(ep.t_start_ms, t0), to = Math.min(ep.t_end_ms, t1);
-    if (to < t0 || from > t1) continue;
-    const bx = x(from), bw = Math.max(2, x(to) - bx);
-    svg.append(svgEl("rect", { x: bx, y: CHART.padT, width: bw, height: plotH,
-                               class: "ep-band" }));
-    const onset = ep.onset_ms && ep.onset_ms >= t0 && ep.onset_ms <= t1 ? ep.onset_ms : from;
+    const onset = ep.onset_ms || ep.t_start_ms;
+    if (onset < t0 || onset > t1) continue;
     svg.append(svgEl("line", { x1: x(onset), y1: CHART.padT, x2: x(onset),
                                y2: CHART.padT + plotH, class: "ep-rule" }));
   }
