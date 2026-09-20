@@ -19,6 +19,7 @@ bottom. Where a target was missed it says so, and the misses are the interesting
 | **Exactly-once through Flink, fault-tested** | TaskManager SIGKILLed mid-checkpoint and held down 60 s: 58/58 samples unhealthy, restored from checkpoint 5, recovered in **14.9 s**, and a `read_committed` consumer saw **328 distinct window scores with 0 duplicates** | [CHAOS](docs/CHAOS.md) 2.1 |
 | **Zero reconciliation drift over four hours** | **5,749,412 readings** across 12 channels over **240.0 minutes**: drift 0, missing 0, duplicates 0, reordered 0, at all sixteen checkpoints | [CORRECTNESS](docs/CORRECTNESS.md) 4a |
 | **Chaos** | **5 fault modes** — broker kill, broker pause, network partition, consumer kill, Flink TaskManager kill — each proving it disrupted something (20/20 samples unserviceable) and each recovering inside a 60 s budget. Worst recovery 25.1 s | [CHAOS](docs/CHAOS.md) |
+| **Detection latency** | Hot-path rolling z-score **0.493 ms p99** over 352 windows against a 250 ms budget — clear by roughly 500x, so NFR-1 is met and is plainly not what binds this design. Chronos-Bolt-tiny runs off that path at 34.8 ms p99 | [EVALUATION](docs/EVALUATION.md) 5.1b |
 | **Throughput** | Producer **76,556 ev/s** blast; consumer plateau **170,414 readings/s** at 3–6 consumers over 6 partitions. NFR-4 (20,000/s) met | [SCALE](docs/SCALE.md) |
 | **Scaling, honestly** | NFR-5 asked for near-linear and **did not get it**: 6 consumers buy **1.80x**, efficiency falls to 30%, and the plateau is at 3 — half the partition count, so partitions are not the bind | [SCALE](docs/SCALE.md) 2–3 |
 | **QLoRA tool-calling planner** | **97.7% exact-match (293/300)** on held-out hard cases, against **20.0%** for the rules handed licences they could not parse and **0.0%** for the rules as deployed. Forbidden actions **1.0% (3/300)** against the baseline's 61.3% | [EVALUATION](docs/EVALUATION.md) 6 |
@@ -138,62 +139,107 @@ Nothing is mirrored between them, so no query has to decide which copy to believ
 
 ## What makes this senior
 
-Not the stack. The stack is a list anyone can copy. These are the parts that took judgement.
+Not the stack. The stack is a list anyone can copy. Two things here are not.
 
-**An eleven-run investigation that is still a negative result, published run by run.** The
-core claim — that conditioning on operational context cuts false pages — has been
-measured eleven times and has **missed its target every time**, and the interesting part
-is that the later runs missed it for completely different reasons than the first seven.
-The path is in [EVALUATION](docs/EVALUATION.md) section 3:
+### 1. Correctness that is demonstrated, not asserted
 
-- **v1** suppressed by co-occurrence: +60.9% reduction, −36.7% recall. It scored well by
-  muting real faults during deploys, which is the exact cheat the generator schedules a
-  quiet-deploy population to catch. It got caught.
-- **v2** required synchrony, and the test was **invalid**: episode start times are window
-  boundaries quantised to a 10 s slide, so a 5 s tolerance could only ever match an exact
-  tie. Recorded as a blocker against my own result.
-- **v3** fixed the onset (ADR-035) and the numbers moved the right way — and still missed.
-- **v4** found the root cause was **distributed-systems, not statistical**: the corroboration
-  test was deciding before its evidence arrived (G-7), and recording a verdict it had not
-  reached (G-16), which is why four published runs all reported `isolated=0`.
-- **v4a** was the control — same policy, evidence actually present — and made things *worse*
-  in the expected direction, which is what ADR-038 was built to answer.
-- **v6a** stopped asking what was happening and asked the other detector whether it saw the
-  same thing. Best *pair* of the eleven, both halves improved at once at 24 channels, still
-  short of 40%.
-- **v6b** asked instead whether the excursion lasted. It cleared the 40% bar — +50.0% and
-  +63.6% — by suppressing real faults, broke the quiet-window trap, and is the clearest
-  demonstration in the repo that the bigger number is not the better policy.
+Most streaming projects claim exactly-once. This one was made to prove it while being broken.
 
-Then the part I am most willing to defend, in two halves.
+- **Exactly-once, fault-tested.** The Flink TaskManager was SIGKILLed mid-checkpoint and held
+  down for 60 s. 58/58 health samples went unserviceable, the job restored from checkpoint 5
+  and recovered in **14.9 s**, and a `read_committed` consumer then counted **328 distinct
+  window scores with 0 duplicates**. The first attempt at this test *passed in 0.1 s* against a
+  job that had never redeployed — Flink reports a dead job healthy for about 50 s — so the
+  check now requires the vertices to have actually moved before it will believe a recovery.
+- **Zero drift over four hours.** **5,749,412 readings**, 240.0 minutes, drift 0 / missing 0 /
+  duplicates 0 / reordered 0 at all sixteen checkpoints. Identity is a per-channel sequence
+  number assigned at the edge, because counting messages cannot tell "processed a million
+  events" from "processed one event a million times".
+- **Five fault modes, each proven to have hurt.** Broker kill, broker pause, network partition,
+  consumer kill, Flink TaskManager kill — each with 20/20 samples unserviceable during the
+  fault and each recovering inside a 60 s budget, worst case 25.1 s. A chaos test that cannot
+  show it disrupted anything is a test of nothing.
+- **Two audits that share no code.** The reconciliation ledger streams the Kafka log; the lake
+  audit reads Parquet off object storage. They agreed on **6/6 channels**.
 
-**First, B-6 showed the 40% target was arithmetically unreachable on that run.** 75 of 112
-false pages overlapped no injected artifact at all, so the ceiling was 37/112 = **33%** even
-for a perfect discriminator. The obvious move was to redefine the denominator to the
-attributable subset, which would have made the headline pass. I wrote the option down,
-recommended nothing, and **left the target as missed** — changing a metric after five
-failures to hit it needs a better reason than "the old one was unflattering".
+**The bug that makes the point.** `(channel, seq)` turned out not to be unique across producer
+restarts, so two genuinely different readings collided — and ClickHouse's `ReplacingMergeTree`
+would have deleted the older one at merge time and reported it as a successful deduplication.
+**Silent data loss wearing the costume of a correctness feature**, found by running the thing
+against real data rather than by reading it. Identity is now `(channel, seq, event_ts)`
+([ADR-046](docs/DECISIONS.md)), and it narrowed a claim `CORRECTNESS.md` had been making
+without qualification. The ClickHouse rollup double-counting a replayed batch was found the
+same way.
 
-**Then v6 attacked the population that arithmetic had excluded, and the denominator never
-had to move.** Every policy up to that point explained an episode by pointing at a deploy or
-a pipeline event, so none of them could reach a false page with no cause to point at. The
-platform already ran a second detector on the same windows; asking it "did you see this
-too" needs no cause at all. That took 24 channels from **+9.7% / −6.7% to +35.4% /
-−3.3%** on byte-identical records — the first mechanism here to improve *both* halves of
-NFR-8 at once, because agreement pulled back ten of the eleven deploy
-attributions and seven of those overlapped a real fault. It removed **52% of the pages B-6
-had counted as out of reach**, and it is still 4.6 points short of the target. What the second
-detector is *not* allowed to do is the load-bearing part: it raises no episodes, so the
-shadow pass and the false-page denominator are untouched and the run stays comparable to all
-seven before it — and "I have no opinion" (cold start, a dropped window, an absent model, 20%
-of decisions) never counts as disagreement, or the whole thing would be v1's blanket
-suppression wearing a second opinion's coat.
+### 2. A research-grade investigation that ends in an honest negative
+
+The core claim — that conditioning a detector on operational context cuts false pages — was
+measured **eleven times across seven mechanisms**, and **missed its target every time**. That
+is the headline, and the reason it is a strength rather than an apology is that the target is
+hard for reasons the literature already documents.
+
+**Unsupervised false-positive reduction on unlabelled streaming data is an open problem.**
+Published methods buy their reduction with one of four things, and this system has ruled out
+all four by premise:
+
+| What the method needs | Representative work |
+|---|---|
+| Labelled true and false positives | FADFPM, a two-stage classifier re-judging the detector's own output ([Information Fusion 100, 2023](https://www.sciencedirect.com/science/article/pii/S1566253523002737)) |
+| Certified anomaly-free training data | FAI ([Qiu et al., *Sensors*, 2023](https://pmc.ncbi.nlm.nih.gov/articles/PMC10708712/)) |
+| A human confirming alerts | Active Anomaly Discovery ([Das et al.](https://www.semanticscholar.org/paper/Incorporating-Expert-Feedback-into-Active-Anomaly-Das-Wong/54d9848e84807c15b49e77b5fac72e48dcf01059)) |
+| A recall penalty for requiring agreement | ReRe, whose dual-LSTM exists to cut RePAD's false positives ([Lee et al.](https://arxiv.org/pdf/2004.02319)) |
+
+So I implemented the label-free mechanisms the field actually uses — seven of them, in three
+families — and **reproduced the field's known limitation rather than a clean solution**:
+
+- **External-cause conditioning** (timing, synchrony, watermarked evidence, topology and blast
+  radius). Best pair **+18.9% / −3.3%**. B-6 then showed the 40% target was *arithmetically
+  unreachable* on one run — 75 of 112 false pages overlapped no injected excursion at all, a
+  ceiling of 33% before the policy decided anything.
+- **Detector agreement** — ReRe's mechanism. Best pair **+35.4% / −3.3%**, and the closest
+  anything came. It also reached **52% of the pages the arithmetic had excluded**, so the
+  denominator never had to move.
+- **Temporal persistence.** **+50.0%** and **+63.6%** — it cleared the bar, and it cleared it
+  by suppressing real anomalies.
+
+**Two of the seven mechanisms cleared the reduction target. Both did it by suppressing real
+anomalies, and the adversarial benchmark caught both** — the generator schedules faults inside
+*quiet* deploy windows, where there is no artifact to attribute anything to, so a blanket
+suppressor loses exactly that population and cannot hide it. v1 lost all of it; the persistence
+run broke it 7/7 to 6/7. A benchmark that could not tell correct attribution from blanket
+suppression would have called both a success.
+
+**One finding departs from the field's framing.** The expected cost of agreement-based
+suppression is a recall penalty — the familiar unanimous-versus-majority voting trade. **It did
+not appear here.** Agreement cost **+0.0%** incident recall at 12 channels and *halved* the
+recall loss at 24, because it also ran protectively and pulled back ten deploy attributions of
+which seven overlapped real faults. What bound it instead was **shared failure modes, measured
+rather than assumed**: the two detectors agreed on **77 of 145** episodes, and the surviving
+false pages are ones *both* saw — both correct that the signal moved, neither able to see that
+it moved for no reason. That says what a third detector would have to be unlike.
+
+**What I refused.** Redefining NFR-8's denominator to the attributable subset would have turned
+the miss into a pass in one edit; the option is written down, no recommendation was offered,
+and the target stands as missed. The two-stage labelled classifier has the best published
+record on this exact problem and was **not** built, because it converts a zero-label streaming
+system into a supervised one and the zero-label premise *is* the system.
+
+**And the measurement discipline that makes the rest of it readable.** A late run showed that
+the same policy on the same seed scores **+11.1% and +18.9%** in two runs — deploy timing is
+anchored to wall clock, so window boundaries fall differently and the run-to-run spread is
+about **8 points** of false-positive reduction (G-19). Every v6 result is therefore reported as
+a **within-run ablation** on byte-identical records, and never as a single number: always a
+pair, reduction beside recall, broken out inside context windows, outside them, and in the
+quiet windows. Full treatment with citations in [EVALUATION](docs/EVALUATION.md) section 3.17;
+the run-by-run path is sections 3.4 to 3.16.
+
+### The rest of the judgement calls
 
 **Honest benchmarking against my own thesis.** The project is built around a foundation-model
 detector. The benchmark says a rolling z-score beats it on this corpus at 141x less compute,
-and that finding is in the README above rather than buried. Where Chronos *does* win is named
-too, because "I measured where the trendy method is the wrong tool" is a stronger result than
-an unexamined win.
+and that finding is in the results table above rather than buried. Where Chronos *does* win is
+named too, because "I measured where the trendy method is the wrong tool" is a stronger result
+than an unexamined win.
 
 **Refusing to fake the deployment layer.** Phase 6 produced validated Kubernetes manifests,
 Terraform and monitoring — and three deliberate absences:
@@ -206,12 +252,11 @@ Terraform and monitoring — and three deliberate absences:
 - **No probes on the four consumers.** `exec: true` is decoration and probing Kafka turns a
   broker outage into a crash-loop. The gap is documented in three places instead.
 
-**Bugs found by running it, not by reading it.** The ClickHouse rollup silently double-counted
-a replayed batch, because a materialized view never sees the `ReplacingMergeTree` dedupe that
-happens later at merge time. And `(channel, seq)` turned out not to be unique across producer
-restarts — which would have had ClickHouse delete a real reading at merge time and report it
-as a successful dedupe. Both are [ADR-046](docs/DECISIONS.md) and both narrowed a claim that
-`CORRECTNESS.md` had been stating without qualification.
+**Recording defects against my own results.** v2's synchrony test was *invalid* — episode
+start times were window boundaries quantised to a 10 s slide, so a 5 s tolerance could only
+ever match an exact tie — and that was filed as a blocker against a number I had already
+published, not quietly fixed. The same happened to G-16, where four published runs reported
+`isolated=0` because the verdict field could not carry the conclusion it was read as carrying.
 
 ---
 
@@ -235,8 +280,8 @@ as a successful dedupe. Both are [ADR-046](docs/DECISIONS.md) and both narrowed 
 - **Single broker, replication factor 1.** No leader election, no ISR shrink. Recovery times
   do not project to a cluster.
 
-The full list is [BLOCKERS](docs/BLOCKERS.md) — 16 known gaps, kept because a document that
-omits them would flatter itself.
+The full list is [BLOCKERS](docs/BLOCKERS.md) — 19 recorded gaps, 16 still open, kept because a
+document that omits them would flatter itself.
 
 ---
 
@@ -250,7 +295,7 @@ omits them would flatter itself.
 | [EVALUATION](docs/EVALUATION.md) | Every measurement, including the losses |
 | [CHAOS](docs/CHAOS.md) | Fault injection and recovery evidence |
 | [SCALE](docs/SCALE.md) | Throughput and the parallelism curve |
-| [DECISIONS](docs/DECISIONS.md) | 49 ADRs: what, why, what was rejected |
+| [DECISIONS](docs/DECISIONS.md) | 53 ADRs: what, why, what was rejected |
 | [BLOCKERS](docs/BLOCKERS.md) | Open questions, deferrals, and every known gap |
 | [DEPLOYMENT](docs/DEPLOYMENT.md) | How to apply the K8s layer, and what is unverified |
 | [PROGRESS](docs/PROGRESS.md) | Status board and a dated work log |
