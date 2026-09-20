@@ -1055,6 +1055,11 @@ quite in its *evidence*.
 
 ### 3.14 All nine measurements
 
+> Extended by section 3.16, which adds v6b and v6bw. One claim below needs reading with
+> G-19 attached: the run-to-run spread of an unchanged policy on this scenario is about
+> 8 points of false-positive reduction, measured in section 3.15, so the cross-run
+> comparisons here carry that much noise and the within-run ablations do not.
+
 | Run | What changed | FP reduction | Recall loss | Quiet-window recall | NFR-8 |
 |---|---|---|---|---|---|
 | **v1** | corroboration by co-occurrence in a 30 s window | **+60.9%** | **-36.7%** | -100.0% | missed |
@@ -1090,6 +1095,222 @@ and the reason they survive is stated -- both detectors see them, both are right
 moved, and neither can see that it moved for no reason. Closing it needs something that
 distinguishes a real excursion with a cause from a real excursion without one, which is a third
 kind of evidence again and not a tuning of this one.
+
+### 3.15 v6b -- temporal persistence, which clears the reduction target and fails the other half
+
+v6a left 34 `unexplained` false pages standing at 24 channels: pages where **both** detectors
+see the excursion, both are right that the signal moved, and neither can see that it moved for
+no reason. Section 3.13 named what would be needed to reach them -- a third kind of evidence,
+not more of the second. Duration is that third kind, and it is the cheapest evidence in the
+system: a bearing that starts running hot is hot in the next window too, while a z-score false
+positive on AR(1) noise is a sample that dominated one window's statistics and nothing more.
+
+**The threshold is read off the window geometry, not swept** (ADR-053). Windows are 30 s wide
+and slide by 10 s, so consecutive windows overlap by 20 s; anything present for one full slide
+is inside two of them. An episode that crossed the threshold in exactly one window failed to
+cross it in the two neighbouring views built from mostly the same samples. `min_persistence_windows`
+is therefore 2, and two tests assert that against the real `EpisodeBuilder` rather than
+against a comment. With the target only four points away after v6a, the temptation to sweep
+this number was real, and refusing it is the reason the default has a derivation attached.
+
+**Two properties make this run cleaner than v6a's.** The duration test needs no model, so the
+verdict barrier is untouched -- the log confirms **0 of 75 verdicts delayed past episode
+close**, against v6a's 12 of 71 -- and the ablation pass is therefore the v4 policy under
+**v4's own timing**, with none of the confound G-17 records against v6a's ablation. And the
+test reads `Episode.window_count`, which the builder has always computed, so nothing about
+detection changed either.
+
+#### v6b, 12 channels
+
+```
+python evaluate.py --duration 900 --rate 400 --channels 12 \
+    --deploys-per-hour 60 --faults-per-hour 120 --persistence --ablate persistence \
+    --report-json docs/results/paired-evaluation-v6b-persistence.json
+```
+
+Run `2cd6a61f`, same seed, density and command as v4 and v6a. Ground truth identical: 30 fault
+incidents over 57 channel-episodes, 43 artifacts, 11 deploy windows. Shadow pass 77 episodes.
+
+| Measure | Shadow | Conditioned | Delta |
+|---|---|---|---|
+| Episodes recorded | 77 | 77 | |
+| Pages raised | 77 | 41 | -36 |
+| False pages (artifact + unexplained) | 54 | 27 | **-27** |
+| of which artifact-driven | 35 | 20 | -15 |
+| of which **unexplained** | 19 | 7 | -12 |
+| Recall, all real faults (incidents) | 93.3% (28/30) | 86.7% (26/30) | **-6.7%** |
+| Recall, faults **outside** windows | 87.5% (14/16) | 87.5% (14/16) | **+0.0%** |
+| Recall, faults **inside** windows | 100.0% (14/14) | 85.7% (12/14) | **-14.3%** |
+| Recall, faults in **quiet** windows | 100.0% (7/7) | 100.0% (7/7) | **+0.0%** |
+| Recall, per fault channel-episode | 93.0% (53/57) | 75.4% (43/57) | **-17.5%** |
+| Precision (incident-level) | 29.9% | 34.1% | +4.3% |
+
+**false-positive reduction +50.0% (target >= 40%, MET) -- recall loss +6.7%
+(tolerance <= 5%, missed). NFR-8 NOT MET.** Fail-open held, 77 of 77.
+
+This is the **first run since v1 to clear the 40% bar**, and the resemblance to v1 is the
+finding rather than a coincidence.
+
+#### v6bw, 24 channels
+
+```
+python evaluate.py --duration 900 --rate 800 --channels 24 \
+    --deploys-per-hour 60 --faults-per-hour 120 --persistence --ablate persistence \
+    --report-json docs/results/paired-evaluation-v6bw-persistence-wide.json
+```
+
+Run `18344482`, same seed and density as v4w and v6aw. Shadow pass 149 episodes.
+
+| Measure | Shadow | Conditioned | Delta |
+|---|---|---|---|
+| Episodes recorded | 149 | 149 | |
+| Pages raised | 149 | 61 | -88 |
+| False pages (artifact + unexplained) | 110 | 40 | **-70** |
+| of which artifact-driven | 41 | 21 | -20 |
+| of which **unexplained** | 69 | 19 | -50 |
+| Recall, all real faults (incidents) | 90.0% (27/30) | 63.3% (19/30) | **-26.7%** |
+| Recall, faults **outside** windows | 87.5% (14/16) | 62.5% (10/16) | -25.0% |
+| Recall, faults **inside** windows | 92.9% (13/14) | 64.3% (9/14) | -28.6% |
+| Recall, faults in **quiet** windows | 100.0% (7/7) | 85.7% (6/7) | **-14.3%** |
+| Recall, per fault channel-episode | 82.5% (47/57) | 56.1% (32/57) | -26.3% |
+| Precision (incident-level) | 26.2% | 34.4% | +8.3% |
+
+**false-positive reduction +63.6% (target >= 40%, MET) -- recall loss +26.7%
+(tolerance <= 5%, missed badly). NFR-8 NOT MET.** Fail-open held, 149 of 149.
+
+**The quiet-window row broke for the first time since v3.** That population exists for exactly
+one purpose (ADR-015): during a quiet deploy there is no artifact at all, so a policy that
+suppresses there is suppressing on something other than evidence. It held at 7/7 through v4,
+v4w, v6a and v6aw. Here it is 6/7. The trap caught this policy, which is what the trap is for.
+
+#### The ablations
+
+| Same records, same run | FP reduction | Recall loss | Attributed |
+|---|---|---|---|
+| 12 ch, duration **advisory** (the v4 policy) | +11.1% | **+0.0%** | 6 of 77 |
+| 12 ch, duration **acting** | **+50.0%** | **-6.7%** | 36 of 77 |
+| 24 ch, duration **advisory** | +12.7% | -6.7% | 14 of 149 |
+| 24 ch, duration **acting** | **+63.6%** | **-26.7%** | 88 of 149 |
+
+Duration is worth **+38.9 points** of reduction at 12 channels and **+50.9** at 24 -- by a wide
+margin the largest contribution any single mechanism has made here. It is also the only one
+that took recall with it in both directions at once.
+
+#### What it suppressed, and why the headline is not the result
+
+```
+12 ch:  no_persistence  fault=16  artifact=3   unexplained=11
+24 ch:  no_persistence  fault=22  artifact=5   unexplained=47
+```
+
+**Over half the suppressions at 12 channels landed on an episode overlapping a real fault**
+(16 of 30). At 24 channels it is 22 of 74. Set that beside v6a on the same scenario, where 13
+suppressions cost 3 fault-overlapping episodes, and the comparison is the point:
+
+| Signal, 12 ch | Suppressions | Of which overlapped a real fault | Incidents lost |
+|---|---|---|---|
+| cross-detector agreement (v6a) | 13 | 3 (23%) | 0 |
+| temporal persistence (v6b) | 30 | **16 (53%)** | 2 |
+
+**Per suppression, duration is less than half as discriminating as agreement.** It posts the
+bigger headline by acting far more often and being wrong far more often, which is precisely
+how v1 posted +60.9%. The difference between v1 and v6b is one of degree, not of kind: v1 lost
+every real fault in a quiet window and v6b loses one of seven at 24 channels.
+
+The incident row understates it at 12 channels, and the channel-episode row is where the damage
+is visible: 93.0% to 75.4%, ten fault channel-episodes gone, while incident recall falls only
+two because multi-channel faults still page on their other metrics. Both resolutions are
+reported for that reason, and at 24 channels the incident row catches up brutally -- 27 to 19.
+
+The domain breakdown says which shape pays: at 24 channels **single-channel faults fall from
+13/15 to 6/15** while machine faults go 12/13 to 11/13. That is the structural bias ADR-053
+named before the run rather than after it. `spike` is one of the generator's injected fault
+kinds and a spike is short by construction, so a duration test is biased against a whole
+population of real faults, and a single-sensor fault has no sibling metric to survive on.
+
+#### The two rescues, one inert and one worth arguing about
+
+```
+12 ch: of 31 one-window episodes, 0 had a recurrence and 11 a shoulder
+24 ch: of 82 one-window episodes, 2 had a recurrence and 28 a shoulder
+```
+
+**Recurrence is inert here, and not for the reason it was guarded against.** The worry recorded
+in ADR-053 was that a recurrence window wide enough to matter would be satisfied by coincidence
+and protect everything, as v1's co-occurrence test was. At one window width the opposite is
+true: flickers essentially never repeat within 30 s -- 0 of 31 and 2 of 82. The rescue is
+costing nothing and buying nothing, and the honest reading is that it is not doing the job it
+was included to do.
+
+**The shoulder would have rescued roughly a third of the flickers** -- 11 of 31 and 28 of 82 --
+and it is measured rather than wired in, on purpose. Whether it would have rescued the *right*
+third is not established by these runs, and switching it on to find out after seeing a
+disappointing recall column is exactly the move ADR-053 exists to refuse. It is recorded as a
+numbered option for the architect, not taken.
+
+#### An unplanned calibration, and it matters for every cross-run claim in this document
+
+The 12-channel advisory pass is the v4 policy under **identical** timing -- no model, barrier
+untouched, 0 of 75 verdicts delayed. It scores **+11.1%** where v4 published **+18.9%** on the
+same seed and the same command; at 24 channels the advisory pass scores +12.7% against v4w's
++3.6%. So the run-to-run spread of an unchanged policy on an unchanged seed is on the order of
+**8 to 9 points of false-positive reduction**, because deploy timing is anchored to wall clock
+and window boundaries fall differently (the shadow pass recorded 77, 76, 77 and 149, 147, 149
+episodes across the runs that share a command).
+
+Three consequences, and none of them are comfortable:
+
+1. **G-17's confound is mostly this, not the barrier.** v6a's advisory pass scored +6.0% where
+   v4 published +18.9%, and the barrier change was one candidate explanation. Run-to-run spread
+   of this size accounts for most of the gap on its own.
+2. **Differences of a few points between runs in section 3.11 are not differences.** v3's
+   +11.1% against v2's +9.0%, and the low-density row's +6.7%, are inside this spread.
+3. **The within-run ablation is the only trustworthy unit here**, which is what it was built to
+   be (ADR-051) and is now measured rather than argued. Every v6 claim is stated as an ablation
+   delta for this reason.
+
+This is recorded as **G-19**.
+
+### 3.16 All eleven measurements
+
+| Run | What changed | FP reduction | Recall loss | Quiet-window recall | NFR-8 |
+|---|---|---|---|---|---|
+| **v1** | corroboration by co-occurrence in a 30 s window | **+60.9%** | **-36.7%** | -100.0% | missed |
+| **v2** | required synchrony, compared on window starts | +9.0% | -10.0% | -33.3% | missed |
+| **low density** | 20 deploys/hour instead of 60 | +6.7% | -6.7% | +0.0% | missed |
+| **v3** | required synchrony, compared on **true onsets** | +11.1% | -6.7% | -33.3% | missed |
+| **v4a** | same policy, evidence made **present** (ADR-037) | +27.8% | -16.7% | +0.0% | missed |
+| **v4** | topology discriminator, 12 ch | +18.9% | -3.3% | +0.0% | missed |
+| **v4w** | topology discriminator, 24 ch | +3.6% | -3.3% | +0.0% | missed |
+| **v6a** | cross-detector agreement, 12 ch (ADR-050) | +24.0% | **+0.0%** | +0.0% | missed |
+| **v6aw** | cross-detector agreement, 24 ch | **+35.4%** | **-3.3%** | +0.0% | missed |
+| **v6b** | temporal persistence, 12 ch (ADR-053) | **+50.0%** | -6.7% | +0.0% | missed |
+| **v6bw** | temporal persistence, 24 ch | **+63.6%** | **-26.7%** | **-14.3%** | missed |
+
+**The best policy in this table is still v6aw, and it is not the one with the biggest number.**
++35.4% / -3.3% is the only row that is close on both halves at once. v6b and v6bw are the only
+rows besides v1 to clear the reduction target, and like v1 they clear it by suppressing real
+faults -- v6bw at a rate the quiet-window trap finally caught.
+
+**What v6b establishes.**
+
+**Duration is a strong signal and a bad policy on its own.** It is the largest single
+contribution measured -- +38.9 and +50.9 points of reduction against its own in-run ablation --
+and it is the least discriminating: over half its suppressions at 12 channels and 30% at 24
+land on episodes overlapping a real fault. A signal can be informative and still be the wrong
+thing to act on alone, and separating those two is what the paired reporting is for.
+
+**The failure has a named shape rather than a shrug.** Short real faults exist in this corpus
+by construction, single-sensor faults have no sibling metric to survive on, and the domain row
+shows exactly that population collapsing (13/15 to 6/15 at 24 channels). ADR-053 predicted this
+bias before the run; the run measured its size.
+
+**NFR-8 is not met, for the tenth and eleventh time.** The two halves have now been cleared
+separately -- recall by v4/v4w/v6a/v6aw, reduction by v6b/v6bw -- and never together. The
+obvious next hypothesis is that the two v6 signals are complementary, since agreement's cost is
+almost entirely in pages it declines to remove and persistence's cost is almost entirely in
+real faults that agreement would have protected. **That is a new experiment and not a tuning of
+this one**, and it is not run here.
 
 ## 4. Q2 — detector vs. baseline on TSB-AD-M
 

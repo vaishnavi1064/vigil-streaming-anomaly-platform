@@ -1,0 +1,207 @@
+{
+  "run": "18344482",
+  "plan": "docs/results/paired-plan-v6bw.json",
+  "config": {
+    "duration_s": 900.0,
+    "rate": 800.0,
+    "channels": 24,
+    "seed": 20260906,
+    "threshold": 8.0,
+    "min_corroborating_channels": 2,
+    "min_scope_fraction": 0.25,
+    "synchrony_ms": 5000,
+    "verdict_buffer_ms": 30000,
+    "require_blast_radius": true,
+    "min_blast_nodes": 2,
+    "second_opinion": false,
+    "second_opinion_agrees_at": 3.0,
+    "second_opinion_protects_attributed": true,
+    "persistence": true,
+    "min_persistence_windows": 2,
+    "persistence_recurrence_ms": 30000,
+    "persistence_shoulder_fraction": 0.0,
+    "persistence_vetoes_attribution": false,
+    "ablate": "persistence"
+  },
+  "topology": "docs/results/fleet-inventory-v6bw.json",
+  "ground_truth": {
+    "faults": 57,
+    "faults_inside_windows": 25,
+    "faults_outside_windows": 32,
+    "faults_inside_quiet_windows": 14,
+    "artifacts": 43,
+    "windows": 11,
+    "fault_incidents": 30,
+    "incidents_by_domain": {
+      "channel": 15,
+      "node": 13,
+      "rack": 2
+    }
+  },
+  "shadow": {
+    "label": "shadow",
+    "episodes": 149,
+    "paged": 149,
+    "attributed": 0,
+    "faults_total": 30,
+    "faults_detected": 27,
+    "faults_inside_total": 14,
+    "faults_inside_detected": 13,
+    "faults_outside_total": 16,
+    "faults_outside_detected": 14,
+    "faults_quiet_window_total": 7,
+    "faults_quiet_window_detected": 7,
+    "artifact_pages": 41,
+    "unexplained_pages": 69,
+    "faults_by_domain": {
+      "rack": [
+        2,
+        2
+      ],
+      "node": [
+        12,
+        13
+      ],
+      "channel": [
+        13,
+        15
+      ]
+    },
+    "fault_channels_total": 57,
+    "fault_channels_detected": 47,
+    "suppressed_by_verdict": {}
+  },
+  "conditioned": {
+    "label": "conditioned",
+    "episodes": 149,
+    "paged": 61,
+    "attributed": 88,
+    "faults_total": 30,
+    "faults_detected": 19,
+    "faults_inside_total": 14,
+    "faults_inside_detected": 9,
+    "faults_outside_total": 16,
+    "faults_outside_detected": 10,
+    "faults_quiet_window_total": 7,
+    "faults_quiet_window_detected": 6,
+    "artifact_pages": 21,
+    "unexplained_pages": 19,
+    "faults_by_domain": {
+      "rack": [
+        2,
+        2
+      ],
+      "node": [
+        11,
+        13
+      ],
+      "channel": [
+        6,
+        15
+      ]
+    },
+    "fault_channels_total": 57,
+    "fault_channels_detected": 32,
+    "suppressed_by_verdict": {
+      "no_persistence": {
+        "fault": 22,
+        "artifact": 5,
+        "unexplained": 47
+      },
+      "corroborated": {
+        "fault": 4,
+        "artifact": 7,
+        "unexplained": 3
+      }
+    }
+  },
+  "fp_reduction": 0.6363636363636364,
+  "recall_loss": 0.2666666666666667,
+  "recall_loss_inside": 0.2857142857142857,
+  "meets_target": false,
+  "fail_open": {
+    "shadow_episodes": 149,
+    "fail_open_episodes": 149,
+    "identical": 149,
+    "missing_from_fail_open": 0,
+    "extra_in_fail_open": 0,
+    "suppressed": 0,
+    "attributed": 0
+  },
+  "conditioning": [
+    "conditioning: on, reading 'ops.context', verdicts held 30s of event time behind the fleet watermark",
+    "conditioning: decided 149 | attributed 88 | raised 61 | corroborated=14, fault_domain=2, implausible=38, isolated=21, no_persistence=74",
+    "rejections reached (an episode carries one): fault_domain=3, implausible=410, isolated=51, out_of_scope=157",
+    "persistence over 149 decisions at 2 window(s), recurrence 30s, shoulder 0: flicker=80, persistent=69 | suppressed 74, vetoed an attribution 0",
+    "persistence sensitivity over 149 decisions (windows:episodes at least that long) 1:149 2:67 3:38 4:30 6:10 | window count p50 1 p90 5 max 7 | of 82 one-window episodes, 2 had a recurrence and 28 a shoulder",
+    "corroboration evidence over 68 scoped decisions: in-scope siblings synchronous mean 0.56 (31 decisions with >=1) | present anywhere in the episode span mean 3.07 (56 decisions with >=1)",
+    "verdict barrier: buffer 30s | held 149 | released on watermark 146 | on flush 3 | delayed past episode close 0 of 146, event-time p50 0.0s p95 0.0s max 0.0s",
+    "context events seen 42 (malformed 0)"
+  ],
+  "suppressed_by_verdict": {
+    "no_persistence": {
+      "fault": 22,
+      "artifact": 5,
+      "unexplained": 47
+    },
+    "corroborated": {
+      "fault": 4,
+      "artifact": 7,
+      "unexplained": 3
+    }
+  },
+  "ablation": {
+    "removed": "the duration test, advisory only",
+    "pass": {
+      "label": "the duration test, advisory only",
+      "episodes": 149,
+      "paged": 135,
+      "attributed": 14,
+      "faults_total": 30,
+      "faults_detected": 25,
+      "faults_inside_total": 14,
+      "faults_inside_detected": 11,
+      "faults_outside_total": 16,
+      "faults_outside_detected": 14,
+      "faults_quiet_window_total": 7,
+      "faults_quiet_window_detected": 7,
+      "artifact_pages": 30,
+      "unexplained_pages": 66,
+      "faults_by_domain": {
+        "rack": [
+          2,
+          2
+        ],
+        "node": [
+          12,
+          13
+        ],
+        "channel": [
+          11,
+          15
+        ]
+      },
+      "fault_channels_total": 57,
+      "fault_channels_detected": 44,
+      "suppressed_by_verdict": {
+        "corroborated": {
+          "fault": 4,
+          "artifact": 7,
+          "unexplained": 3
+        }
+      }
+    },
+    "fp_reduction": 0.12727272727272726,
+    "recall_loss": 0.06666666666666665,
+    "conditioning": [
+      "conditioning: on, reading 'ops.context', verdicts held 30s of event time behind the fleet watermark",
+      "conditioning: decided 149 | attributed 14 | raised 135 | corroborated=14, fault_domain=3, implausible=96, isolated=36",
+      "rejections reached (an episode carries one): fault_domain=3, implausible=410, isolated=51, out_of_scope=157",
+      "persistence over 149 decisions at 2 window(s), recurrence 30s, shoulder 0: flicker=80, persistent=69 | advisory only, changed nothing",
+      "persistence sensitivity over 149 decisions (windows:episodes at least that long) 1:149 2:67 3:38 4:30 6:10 | window count p50 1 p90 5 max 7 | of 82 one-window episodes, 2 had a recurrence and 28 a shoulder",
+      "corroboration evidence over 68 scoped decisions: in-scope siblings synchronous mean 0.56 (31 decisions with >=1) | present anywhere in the episode span mean 3.07 (56 decisions with >=1)",
+      "verdict barrier: buffer 30s | held 149 | released on watermark 146 | on flush 3 | delayed past episode close 0 of 146, event-time p50 0.0s p95 0.0s max 0.0s",
+      "context events seen 42 (malformed 0)"
+    ]
+  }
+}
