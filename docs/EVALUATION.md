@@ -1312,6 +1312,133 @@ almost entirely in pages it declines to remove and persistence's cost is almost 
 real faults that agreement would have protected. **That is a new experiment and not a tuning of
 this one**, and it is not run here.
 
+### 3.17 Novelty: what was attempted, what the field already knows, and what this adds
+
+Eleven runs missing one target invites a fair question: is NFR-8 missed because the work is
+weak, or because the target is hard? This section answers it with the literature rather than
+with an opinion, and it is deliberately the least flattering way to frame the result -- the
+honest position is that **the problem is open, the published solutions all buy their way out
+with something this system does not have, and what these eleven runs contribute is a measured
+map of where the label-free mechanisms stop.**
+
+#### The constraint that makes this hard, stated precisely
+
+NFR-8 asks for a large false-positive reduction **with no labels, on a live stream, without a
+human in the loop, and without losing real anomalies**. Drop any one of those and the problem
+has known solutions. Published false-positive mitigation for anomaly detection buys its
+reduction with one of four things, and each is something this platform has ruled out:
+
+| What the method needs | Representative work | Why it is unavailable here |
+|---|---|---|
+| **Labelled true and false positives** | FADFPM -- a two-stage design where a classifier is trained on the detector's own true and false positives to re-judge what it flagged ([Information Fusion 100, 2023](https://www.sciencedirect.com/science/article/pii/S1566253523002737)) | The stream is unlabelled by premise (ADR-001). Producing the labels means a human adjudicating every alarm, which is the cost the system exists to remove |
+| **Certified anomaly-free training data** | FAI -- learns the distribution of a detector's false alarms from clean training data and filters on it as a post-processing stage ([Qiu et al., *Sensors*, 2023](https://pmc.ncbi.nlm.nih.gov/articles/PMC10708712/)) | Nothing here certifies a stretch of a live fleet's telemetry as anomaly-free. Also worth naming: FAI is image defect detection, not time series, so it is a pattern to learn from and not a baseline to compare against |
+| **A human confirming alerts** | Active Anomaly Discovery -- an analyst labels instances and the detector reweights to match their judgement ([Das et al.](https://www.semanticscholar.org/paper/Incorporating-Expert-Feedback-into-Active-Anomaly-Das-Wong/54d9848e84807c15b49e77b5fac72e48dcf01059)) | NFR-8 is about reducing what reaches the human. A mechanism whose input is human attention cannot be the mechanism that reduces demand on it |
+| **Accepting a recall penalty for agreement** | ReRe -- a dual-LSTM successor to RePAD, built specifically to cut RePAD's false positives by requiring two models to identify a point jointly ([Lee et al., arXiv 2004.02319](https://arxiv.org/pdf/2004.02319)) | Available, and **it is the mechanism tested as v6a**. The recall half of NFR-8 is what makes the penalty unacceptable rather than the mechanism unavailable |
+
+A fifth pattern is worth naming because it is the closest prior art to this project's *core*
+idea rather than to its later ones: **APHRODITE** reduces a network intrusion detector's false
+positives by watching a second, independent signal -- anomalies in outbound traffic -- and
+correlating them with the alerts raised on inbound traffic
+([Bolzoni and Etalle, University of Twente](https://research.utwente.nl/en/publications/aphrodite-an-anomaly-based-architecture-for-false-positive-reduct/)).
+That is structurally the same move as conditioning a detector on reconciliation health and
+deploy markers (ADR-002, ADR-003): explain an alarm by corroborating it against a channel the
+detector cannot see. It is prior art for the *family*, not for the specific signals here, and
+it is cited because a contribution that does not name its nearest neighbour is not a
+contribution.
+
+#### What was tested: seven mechanisms, three signal families, eleven runs
+
+Every label-free family the field uses was implemented and measured on the same adversarial
+scenario, at the same seed and density, against the same shadow pass.
+
+| Family | Mechanism | Runs | Best pair | Reduction >= 40%? |
+|---|---|---|---|---|
+| **1. External-cause conditioning** | co-occurrence in a window | v1 | +60.9% / -36.7% | **yes, dishonestly** |
+| | synchrony on window starts | v2, low density | +9.0% / -10.0% | no |
+| | synchrony on true onsets (ADR-035) | v3 | +11.1% / -6.7% | no |
+| | evidence made present behind a watermark (ADR-037) | v4a | +27.8% / -16.7% | no |
+| | topology / blast radius (ADR-038) | v4, v4w | +18.9% / -3.3% | no |
+| **2. Detector agreement** | cross-detector corroboration (ADR-050) | v6a, v6aw | **+35.4% / -3.3%** | no |
+| **3. Temporal persistence** | duration and recurrence (ADR-053) | v6b, v6bw | +63.6% / -26.7% | **yes, dishonestly** |
+
+**Seven mechanisms. Two cleared the reduction target. Both cleared it by suppressing real
+anomalies, and the adversarial generator caught both.** v1 attributed away every real fault in
+a quiet deploy window -- a population ADR-015 schedules for exactly this purpose, where there
+is no artifact to attribute anything to -- and v6bw broke the same population, 7/7 to 6/7, at
+a cost of eight fault incidents. A benchmark that could not tell correct attribution from
+blanket suppression would have reported both as successes. This one reported them as what they
+are, which is the single most useful thing in the evaluation harness.
+
+#### What this reproduces, and where it departs from the field
+
+**Reproduced.** The field's central limitation held: no label-free mechanism tested here
+reached a large reduction while holding recall. That is the expected result, and reproducing a
+known limitation carefully is a different thing from failing to solve a problem.
+
+**Departed from, and this is the part that is genuinely new here.** The standard expectation
+for agreement-based suppression is a precision-for-recall trade -- requiring two detectors to
+concur suppresses noise and loses the anomalies only one of them can see, which is the
+familiar unanimous-versus-majority voting tradeoff. **That trade did not appear in this data.**
+At 12 channels cross-detector agreement cost **+0.0%** incident recall, and at 24 channels it
+*halved* the recall loss of the policy it was added to, 6.7% to 3.3%, because agreement also
+ran in the protective direction and pulled back ten deploy attributions of which seven
+overlapped real faults (section 3.13).
+
+What bound the mechanism instead was **shared failure modes**, measured rather than assumed:
+the two detectors **agreed on 77 of 145 episodes**, and 34 false pages survived precisely
+because both detectors saw them. Both were right that the signal moved; it moved because of
+AR(1) noise, and cross-detector agreement is structurally blind to the difference between a
+real excursion with a cause and a real excursion without one. So the ceiling on this family
+here is detector correlation, not the voting rule -- a sharper diagnosis than "ensembles trade
+recall", and one that says what a third detector would have to be *unlike* in order to help.
+
+#### Two refusals, which are the result as much as the numbers are
+
+**The target was shown arithmetically unreachable, and the metric was left alone.** On the v4w
+run, **75 of 112 false pages overlapped no injected excursion of any kind** (B-6). A policy
+that can only suppress by attributing to a cause therefore had a ceiling of 37/112 = **33%**
+before it decided anything, against a 40% target. Redefining the denominator to the
+attributable subset would have turned a missed requirement into a met one in a single edit.
+The option was written down, no recommendation was offered, and the target was left as missed
+-- and then v6 reached that population anyway with a signal that needs no cause at all,
+removing **52% of the pages the arithmetic had excluded**, so the denominator never had to
+move. Changing a metric after missing it needs a better reason than that the old one was
+unflattering, and in the end it needed no reason at all.
+
+**The effective fix was available and was not adopted.** The two-stage labelled classifier is
+the approach with the best published record on this exact problem, and it is straightforward
+to build: keep the detector, label its output, train a second model to re-judge it. It was not
+built, because it converts a zero-label streaming system into a supervised one and the
+zero-label premise is the system (ADR-001). Reporting the honest ceiling of the label-free
+approaches is a smaller result than adopting the labelled one, and it is the only one of the
+two that is about *this* system.
+
+#### Measurement integrity, which is why any of the above is worth reading
+
+A late run produced the number that governs how every other number here should be read. The
+v6b advisory pass runs the v4 policy under v4's own timing -- no model, barrier untouched,
+0 of 75 verdicts delayed -- and scored **+11.1%** where v4 published **+18.9%** on the same
+seed and the same command. **The run-to-run spread of an unchanged policy is therefore about
+8 points of false-positive reduction** (G-19), because deploy timing is anchored to wall clock
+and window boundaries fall differently.
+
+Three consequences are applied throughout sections 3.12 to 3.16 rather than noted and
+forgotten:
+
+- every v6 claim is stated as a **within-run ablation** on byte-identical records, because
+  that is the only comparison the spread does not swamp;
+- cross-run differences of a few points -- v3 against v2, the low-density row -- are inside
+  the noise and are not read as effects;
+- no result is ever a single number. Each is a **pair**: false-positive reduction beside
+  recall, broken out inside context windows, outside them, and in the quiet windows that exist
+  to catch a blanket suppressor (ADR-016).
+
+The honest summary of the contribution is therefore: **an open problem, attacked with every
+label-free mechanism the field offers, measured under a protocol strict enough that two of the
+seven were caught cheating, with the limitation reproduced rather than papered over and one
+finding -- that detector correlation rather than the voting rule is what binds agreement-based
+suppression -- that the field's framing would not have predicted.**
+
 ## 4. Q2 — detector vs. baseline on TSB-AD-M
 
 **Corpus.** TSB-AD-M, the multivariate track: 200 labelled series, 2.4 GB extracted.
