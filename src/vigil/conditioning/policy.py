@@ -56,6 +56,12 @@ from vigil.context import ContextEvent, ContextKind, Severity
 from vigil.episodes import Episode, EpisodeStatus
 from vigil.topology import FleetTopology
 
+# The fraction of the detection threshold a preceding window must reach to be counted as
+# a shoulder *for reporting*, independently of whether the rescue is switched on. Fixed
+# here rather than configurable, because a counterfactual whose own threshold moves is not
+# a counterfactual -- it is a second knob wearing a report's clothes.
+SHOULDER_REPORTING_FRACTION = 0.5
+
 
 class Verdict(StrEnum):
     """Why the policy decided what it did. Recorded on every episode."""
@@ -568,12 +574,17 @@ class ConditioningPolicy:
             if recurrence_ms > 0
             else 0
         )
+        # Measured at the reporting fraction whatever the acting fraction is, so a run with
+        # the rescue switched off still reports how many shoulders were *there*. Reading
+        # the acting fraction here would make "the test was off" and "no shoulder existed"
+        # the same zero in the report, which is the distinction the whole counterfactual
+        # exists to draw.
         shoulder = (
             self.persistence.shoulder_before(
                 episode.channel,
                 episode.t_start_ms,
                 episode.threshold,
-                self.thresholds.persistence_shoulder_fraction,
+                self.thresholds.persistence_shoulder_fraction or SHOULDER_REPORTING_FRACTION,
             )
             if self.persistence is not None
             else 0
@@ -605,7 +616,10 @@ class ConditioningPolicy:
                     f"rather than a single blip"
                 ),
             )
-        if shoulder and flagged + shoulder >= needed:
+        # Gated on the *acting* fraction, not on whether a shoulder was measured: the
+        # measurement runs on every episode so the counterfactual is real, and the rescue
+        # only fires where someone asked for it.
+        if self.thresholds.persistence_shoulder_fraction > 0 and flagged + shoulder >= needed:
             return EpisodePersistence(
                 covered=True,
                 persistent=True,

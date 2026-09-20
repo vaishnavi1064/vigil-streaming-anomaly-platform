@@ -201,6 +201,21 @@ def test_a_shoulder_does_not_rescue_anything_at_the_default_fraction():
     )
 
 
+def test_the_shoulder_is_still_counted_when_the_rescue_is_off():
+    # Otherwise "the test was off" and "no shoulder was there" are the same zero in the
+    # report, and the counterfactual the report exists to offer says nothing. Found by
+    # reading the first real run's output before it had finished producing.
+    policy = policy_with(
+        window_scores=[window_score(FLEET[0], 30_000, 7.9), window_score(FLEET[0], 40_000, 7.5)],
+        persistence_recurrence_ms=0,
+    )
+    policy.decide(episode(FLEET[0], start_ms=60_000, windows=1))
+    # One, not two: the window at 40 s runs to 70 s and so overlaps the episode's own
+    # window. A shoulder has to be built from samples the episode did not supply.
+    assert policy._flicker_shoulders == [1]
+    assert "1 a shoulder" in policy.persistence_sensitivity()
+
+
 def test_a_shoulder_rescues_when_the_fraction_is_turned_on():
     policy = policy_with(
         window_scores=[window_score(FLEET[0], 30_000, 7.9)],
